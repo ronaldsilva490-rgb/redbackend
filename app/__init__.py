@@ -25,7 +25,7 @@ def create_app():
     from .routes.clients       import clients_bp
     from .routes.workshop      import workshop_bp
     from .routes.finance       import finance_bp
-    from .routes.finance_v2    import finance_bp as finance_v2_bp
+    from .routes.finance_v2    import finance_v2_bp
     from .routes.products      import products_bp
     from .routes.tables        import tables_bp
     from .routes.orders        import orders_bp
