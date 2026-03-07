@@ -38,23 +38,29 @@ def validar_chave_api(chave_api):
     """Validar chave de API do OpenRouter"""
     try:
         print(f"🔍 Validando chave de API: {chave_api[:15]}...")
+        print(f"   Comprimento da chave: {len(chave_api)}")
         headers = {
             "Authorization": f"Bearer {chave_api}",
             "HTTP-Referer": "https://redcomercialweb.vercel.app",
             "X-Title": "RedCommercial AI Agent",
             "Content-Type": "application/json"
         }
+        print(f"   Headers: {list(headers.keys())}")
         resposta = requests.get(
             f"{OPENROUTER_API}/models",
             headers=headers,
             timeout=10
         )
-        valida = resposta.status_code == 200
-        if valida:
+        print(f"   Status: {resposta.status_code}")
+        
+        if resposta.status_code == 200:
             print(f"✓ Chave de API válida")
+            return True
         else:
             print(f"❌ Erro: status {resposta.status_code}")
-        return valida
+            print(f"   Resposta: {resposta.text[:300]}")
+            return False
+            
     except requests.exceptions.Timeout:
         print("❌ Timeout ao conectar ao OpenRouter")
         return False
@@ -62,7 +68,7 @@ def validar_chave_api(chave_api):
         print("❌ Erro de conexão ao OpenRouter")
         return False
     except Exception as e:
-        print(f"❌ Erro ao validar chave: {e}")
+        print(f"❌ Erro ao validar chave: {type(e).__name__}: {e}")
         return False
 
 
