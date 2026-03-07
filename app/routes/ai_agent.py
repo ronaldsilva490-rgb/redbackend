@@ -141,13 +141,25 @@ def obter_modelos():
 @ai_agent_bp.route('/chat', methods=['POST'])
 def conversar_ia():
     """Chat com IA para análise e modificação de código via Groq"""
+    print("🔍 Recebido request no /chat")
+    print(f"Content-Type: {request.content_type}")
+    print(f"Method: {request.method}")
+    
     try:
+        print(f"📝 Tentando parsear JSON...")
         dados = request.json or {}
+        print(f"✓ JSON parseado: {list(dados.keys())}")
+        
         prompt = dados.get('prompt', '').strip()
         chave_api = dados.get('api_key', '').strip()
         modelo = dados.get('modelo', 'mixtral-8x7b-32768')
         
+        print(f"  prompt: {prompt[:50] if prompt else 'vazio'}...")
+        print(f"  chave: {chave_api[:20] if chave_api else 'vazio'}...")
+        print(f"  modelo: {modelo}")
+        
         if not prompt or not chave_api:
+            print(f"❌ Validação falhou: prompt={bool(prompt)}, chave={bool(chave_api)}")
             return jsonify({
                 "erro": "Prompt e api_key são obrigatórios"
             }), 400
@@ -155,6 +167,7 @@ def conversar_ia():
         print(f"🤖 Enviando prompt para Groq via modelo: {modelo}")
         
         if not validar_chave_api(chave_api):
+            print(f"❌ Chave inválida")
             return jsonify({
                 "erro": "Chave de API inválida"
             }), 401
