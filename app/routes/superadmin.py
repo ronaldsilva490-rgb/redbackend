@@ -101,19 +101,13 @@ def system_status():
     except Exception as e:
         results["supabase"] = {"ok": False, "label": "Supabase DB", "error": str(e)[:120]}
 
-    # Vercel — ping HEAD (mais rápido que GET)
+    # Vercel — ping direto na URL do frontend deployado
     try:
         t0 = time.perf_counter()
-        if VERCEL_TOKEN:
-            r = requests.head("https://api.vercel.com/v9/projects", headers={"Authorization": f"Bearer {VERCEL_TOKEN}"}, timeout=8)
-            latency = round((time.perf_counter()-t0)*1000)
-            if r.status_code in [200, 401, 403]:
-                # 401/403 = token inválido/expirado, mas ping funcionou
-                results["vercel"] = {"ok": r.status_code == 200, "label": "Vercel Frontend", "latency_ms": latency, "error": f"HTTP {r.status_code}" if r.status_code != 200 else None}
-            else:
-                results["vercel"] = {"ok": False, "label": "Vercel Frontend", "latency_ms": latency, "error": f"HTTP {r.status_code}"}
-        else:
-            results["vercel"] = {"ok": None, "label": "Vercel Frontend", "error": "Token nao configurado"}
+        # Tenta pingar a URL do frontend Vercel
+        r = requests.head("https://redcomercialweb.vercel.app", timeout=8, allow_redirects=True)
+        latency = round((time.perf_counter()-t0)*1000)
+        results["vercel"] = {"ok": r.status_code < 400, "label": "Vercel Frontend", "latency_ms": latency}
     except Exception as e:
         results["vercel"] = {"ok": False, "label": "Vercel Frontend", "error": str(e)[:80]}
 
