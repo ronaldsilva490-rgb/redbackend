@@ -36,7 +36,8 @@ def create_app():
     from .routes.caixa         import caixa_bp
     from .routes.logs          import logs_bp
     from .routes.settings      import settings_bp
-    from .routes.ai_agent      import ai_agent_bp
+    from .routes.business      import business_bp
+    from .routes.preferences   import preferences_bp
 
     app.register_blueprint(auth_bp,        url_prefix="/api/auth")
     app.register_blueprint(tenants_bp,     url_prefix="/api/tenants")
@@ -55,7 +56,8 @@ def create_app():
     app.register_blueprint(caixa_bp,       url_prefix="/api/caixa")
     app.register_blueprint(logs_bp,        url_prefix="/api/superadmin")
     app.register_blueprint(settings_bp,    url_prefix="/api/superadmin")
-    app.register_blueprint(ai_agent_bp)
+    app.register_blueprint(business_bp,    url_prefix="/api/business")
+    app.register_blueprint(preferences_bp, url_prefix="/api/preferences")
 
     @app.get("/")
     def health():

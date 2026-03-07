@@ -218,3 +218,207 @@ def refresh():
         })
     except Exception:
         return error("Refresh token inválido ou expirado", 401)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# AUTENTICAÇÃO DE ADMINISTRADORES
+# ═══════════════════════════════════════════════════════════════════════════════
+
+from werkzeug.security import generate_password_hash, check_password_hash
+import os
+import jwt
+from datetime import datetime, timedelta
+
+ADMIN_MASTER_KEY = os.getenv("ADMIN_MASTER_KEY", "RED")  # Palavra-mestre padrão
+JWT_SECRET = os.getenv("SECRET_KEY", "dev-secret-change-in-prod")
+JWT_ALGORITHM = "HS256"
+
+
+def generate_admin_token(admin_id: str) -> str:
+    """Gera JWT para admin."""
+    payload = {
+        "admin_id": admin_id,
+        "tipo": "admin",
+        "exp": datetime.utcnow() + timedelta(hours=24),
+        "iat": datetime.utcnow()
+    }
+    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+
+
+def verify_admin_token(token: str) -> dict or None:
+    """Verifica e decodifica JWT de admin."""
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        if payload.get("tipo") != "admin":
+            return None
+        return payload
+    except:
+        return None
+
+
+@auth_bp.post("/admin/register")
+def admin_register():
+    """Cria novo administrador do sistema."""
+    body = request.get_json() or {}
+    nome = body.get("nome", "").strip()
+    username = body.get("username", "").strip().lower()
+    email = body.get("email", "").strip().lower()
+    senha = body.get("senha", "")
+    palavra_mestre = body.get("palavra_mestre", "")
+
+    # Validações
+    if not all([nome, username, email, senha, palavra_mestre]):
+        return error("Todos os campos são obrigatórios")
+
+    if len(nome) < 3:
+        return error("Nome deve ter ao menos 3 caracteres")
+
+    if len(username) < 3 or not re.match(r'^[a-z0-9._-]+$', username):
+        return error("Username inválido. Use apenas letras, números, ponto, traço e underline")
+
+    if len(senha) < 8:
+        return error("Senha deve ter ao menos 8 caracteres")
+
+    if palavra_mestre != ADMIN_MASTER_KEY:
+        return error("Palavra-mestre de admin incorreta", 403)
+
+    sb = get_supabase_admin()
+
+    # Verifica se já existe
+    try:
+        existing = sb.table("admin_users") \
+            .select("id") \
+            .or_(f"username.eq.{username},email.eq.{email}") \
+            .execute()
+        if existing.data:
+            return error("Username ou email já cadastrado", 409)
+    except:
+        pass
+
+    # Cria o admin
+    try:
+        senha_hash = generate_password_hash(senha, method='pbkdf2:sha256')
+        
+        resp = sb.table("admin_users").insert({
+            "nome": nome,
+            "username": username,
+            "email": email,
+            "senha_hash": senha_hash,
+            "ativo": True
+        }).execute()
+
+        admin_id = resp.data[0]["id"] if resp.data else None
+        if not admin_id:
+            return error("Erro ao criar administrador", 500)
+
+        # Log da criação
+        try:
+            sb.rpc("log_admin_activity", {
+                "p_admin_id": admin_id,
+                "p_acao": "admin_criado",
+                "p_descricao": f"Novo administrador {username} criado"
+            }).execute()
+        except:
+            pass
+
+        return success({
+            "admin_id": admin_id,
+            "username": username,
+            "nome": nome,
+            "email": email
+        }, "Administrador criado com sucesso!", 201)
+
+    except Exception as e:
+        return error(f"Erro ao criar administrador: {str(e)}", 500)
+
+
+@auth_bp.post("/admin/login")
+def admin_login():
+    """Login de administrador do sistema."""
+    body = request.get_json() or {}
+    login = body.get("login", "").strip()  # username ou email
+    senha = body.get("senha", "")
+
+    if not login or not senha:
+        return error("Login e senha são obrigatórios")
+
+    sb = get_supabase_admin()
+
+    try:
+        # Busca admin por username ou email
+        query = sb.table("admin_users").select("*")
+        
+        if "@" in login:
+            query = query.eq("email", login.lower())
+        else:
+            query = query.eq("username", login.lower())
+
+        resp = query.execute()
+
+        if not resp.data:
+            return error("Admin não encontrado", 401)
+
+        admin = resp.data[0]
+
+        # Verifica ativo
+        if not admin.get("ativo"):
+            return error("Administrador desativado", 403)
+
+        # Verifica senha
+        if not check_password_hash(admin["senha_hash"], senha):
+            return error("Senha incorreta", 401)
+
+        # Gera token
+        token = generate_admin_token(admin["id"])
+
+        # Log do login
+        try:
+            sb.rpc("log_admin_activity", {
+                "p_admin_id": admin["id"],
+                "p_acao": "login",
+                "p_descricao": f"Login de {admin['username']}"
+            }).execute()
+        except:
+            pass
+
+        return success({
+            "access_token": token,
+            "tipo": "admin",
+            "admin": {
+                "id": admin["id"],
+                "nome": admin["nome"],
+                "username": admin["username"],
+                "email": admin["email"]
+            }
+        }, "Login bem-sucedido")
+
+    except Exception as e:
+        return error(f"Erro ao fazer login: {str(e)}", 500)
+
+
+@auth_bp.post("/admin/verifica-token")
+def admin_verify_token():
+    """Verifica se token de admin é válido."""
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        return error("Token não fornecido ou formato inválido", 401)
+
+    token = auth_header[7:]  # Remove "Bearer "
+    payload = verify_admin_token(token)
+
+    if not payload:
+        return error("Token inválido ou expirado", 401)
+
+    sb = get_supabase_admin()
+    try:
+        admin_resp = sb.table("admin_users") \
+            .select("id, nome, username, email, ativo") \
+            .eq("id", payload["admin_id"]) \
+            .execute()
+
+        if not admin_resp.data or not admin_resp.data[0]["ativo"]:
+            return error("Admin não encontrado ou desativado", 401)
+
+        return success({"admin": admin_resp.data[0], "token_valido": True})
+    except:
+        return error("Erro ao verificar token", 500)
