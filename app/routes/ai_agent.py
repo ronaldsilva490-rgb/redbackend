@@ -104,21 +104,21 @@ def validar_chave():
         }), 500
 
 
-@ai_agent_bp.route('/models', methods=['GET'])
+@ai_agent_bp.route('/models', methods=['POST', 'GET'])
 def obter_modelos():
     """Obter lista de modelos disponíveis do OpenRouter"""
     try:
-        chave_api = request.headers.get('X-API-Key')
-        if not chave_api:
-            return jsonify({
-                "erro": "Chave de API obrigatória no header X-API-Key"
-            }), 400
+        # Aceitar chave tanto por GET header quanto POST body
+        if request.method == 'POST':
+            dados = request.get_json() or {}
+            chave_api = dados.get('api_key') or request.headers.get('X-API-Key') or request.headers.get('Authorization', '').replace('Bearer ', '')
+        else:
+            chave_api = request.headers.get('X-API-Key') or request.headers.get('Authorization', '').replace('Bearer ', '')
         
-        print(f"📥 Buscando modelos...")
-        if not validar_chave_api(chave_api):
-            return jsonify({
-                "erro": "Chave de API inválida ou expirada"
-            }), 401
+        if not chave_api:
+            return jsonify({"erro": "Chave de API obrigatória"}), 400
+        
+        print(f"📥 Buscando modelos com chave: {chave_api[:20]}...")
         
         headers = {
             "Authorization": f"Bearer {chave_api}",
@@ -127,72 +127,53 @@ def obter_modelos():
             "Content-Type": "application/json"
         }
         
+        print(f"Headers: {list(headers.keys())}")
+        
         resposta = requests.get(
             f"{OPENROUTER_API}/models",
             headers=headers,
             timeout=10
         )
         
+        print(f"Status OpenRouter: {resposta.status_code}")
+        
+        if resposta.status_code == 401:
+            return jsonify({"erro": "Chave de API inválida ou expirada"}), 401
+        
         if resposta.status_code != 200:
-            print(f"❌ Erro ao buscar modelos: {resposta.status_code}")
-            return jsonify({
-                "erro": "Falha ao buscar modelos do OpenRouter"
-            }), 400
+            print(f"❌ Erro {resposta.status_code}: {resposta.text[:300]}")
+            return jsonify({"erro": f"Erro ao buscar modelos: {resposta.status_code}"}), 400
         
         todos_modelos = resposta.json().get('data', [])
+        print(f"✓ Recebidos {len(todos_modelos)} modelos do OpenRouter")
         
-        modelos_livres = []
-        modelos_pagos = []
+        # Processar e retornar modelos como está
+        modelos_processados = []
+        for m in todos_modelos:
+            modelos_processados.append({
+                "id": m.get('id'),
+                "name": m.get('name', m.get('id')),
+                "description": m.get('description', ''),
+                "pricing": m.get('pricing', {}),
+                "is_recommended": m.get('id') in MODELOS_RECOMENDADOS
+            })
         
-        for modelo in todos_modelos:
-            modelo_id = modelo.get('id', '')
-            preco = modelo.get('pricing', {})
-            
-            try:
-                eh_livre = (
-                    float(preco.get('prompt', 1)) == 0 and
-                    float(preco.get('completion', 1)) == 0
-                )
-            except:
-                eh_livre = False
-            
-            info_modelo = {
-                "id": modelo_id,
-                "name": modelo.get('name', modelo_id),
-                "description": modelo.get('description', ''),
-                "is_recommended": False,
-                "best_for": "Desenvolvimento",
-                "pricing_tier": "GRÁTIS" if eh_livre else "PAGO"
-            }
-            
-            # Marcar modelos recomendados
-            if modelo_id in MODELOS_RECOMENDADOS:
-                info_modelo.update(MODELOS_RECOMENDADOS[modelo_id])
-            elif eh_livre and any(palavra in modelo_id.lower() for palavra in ['llama', 'mistral', 'neural']):
-                info_modelo["is_recommended"] = True
-            
-            if eh_livre:
-                modelos_livres.append(info_modelo)
-            else:
-                modelos_pagos.append(info_modelo)
+        # Ordenar com recomendados primeiro
+        modelos_processados.sort(key=lambda x: (not x.get('is_recommended', False), x['name']))
         
-        # Ordenar recomendados primeiro
-        modelos_livres.sort(key=lambda x: (not x.get('is_recommended', False), x['name']))
-        
-        print(f"✓ {len(modelos_livres)} modelos livres encontrados")
+        print(f"✓ Retornando {len(modelos_processados)} modelos processados")
         
         return jsonify({
             "sucesso": True,
-            "modelos_livres": modelos_livres,
-            "modelos_pagos": modelos_pagos[:10],
-            "recomendado_para_desenvolvimento": [m for m in modelos_livres if m.get('is_recommended')]
+            "data": modelos_processados,
+            "total": len(modelos_processados)
         }), 200
     
     except Exception as e:
-        print(f"❌ Erro ao buscar modelos: {e}")
-        return jsonify({
-            "erro": f"Erro ao buscar modelos: {str(e)}"
-        }), 500
+        print(f"❌ Erro ao buscar modelos: {type(e).__name__}: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"erro": f"Erro ao buscar modelos: {str(e)}"}), 500
 
 
 @ai_agent_bp.route('/chat', methods=['POST'])
