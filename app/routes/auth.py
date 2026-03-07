@@ -396,7 +396,7 @@ def admin_login():
         return error(f"Erro ao fazer login: {str(e)}", 500)
 
 
-@auth_bp.post("/admin/verifica-token")
+@auth_bp.get("/admin/verifica-token")
 def admin_verify_token():
     """Verifica se token de admin é válido."""
     auth_header = request.headers.get("Authorization", "")
@@ -422,3 +422,168 @@ def admin_verify_token():
         return success({"admin": admin_resp.data[0], "token_valido": True})
     except:
         return error("Erro ao verificar token", 500)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# GERENCIAMENTO DE ADMINISTRADORES
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def require_admin_token(f):
+    """Decorator para verificar token de admin."""
+    from functools import wraps
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        auth_header = request.headers.get("Authorization", "")
+        if not auth_header.startswith("Bearer "):
+            return error("Token não fornecido", 401)
+        
+        token = auth_header[7:]
+        payload = verify_admin_token(token)
+        if not payload:
+            return error("Token inválido ou expirado", 401)
+        
+        return f(*args, **kwargs)
+    return decorated_function
+
+
+@auth_bp.get("/admin/list")
+@require_admin_token
+def list_admins():
+    """Lista todos os administradores do sistema."""
+    sb = get_supabase_admin()
+    
+    try:
+        admins_resp = sb.table("admin_users") \
+            .select("id, nome, username, email, ativo, created_at") \
+            .order("created_at", desc=True) \
+            .execute()
+        
+        return success({
+            "admins": admins_resp.data or []
+        }, "Administradores carregados com sucesso")
+    except Exception as e:
+        return error(f"Erro ao listar administradores: {str(e)}", 500)
+
+
+@auth_bp.post("/admin/deactivate/<admin_id>")
+@require_admin_token
+def deactivate_admin(admin_id):
+    """Desativa um administrador."""
+    sb = get_supabase_admin()
+    
+    try:
+        # Verifica se admin existe
+        resp = sb.table("admin_users") \
+            .select("id") \
+            .eq("id", admin_id) \
+            .execute()
+        
+        if not resp.data:
+            return error("Administrador não encontrado", 404)
+        
+        # Desativa o admin
+        sb.table("admin_users") \
+            .update({"ativo": False}) \
+            .eq("id", admin_id) \
+            .execute()
+        
+        # Log da ação
+        try:
+            auth_header = request.headers.get("Authorization", "")
+            token = auth_header[7:]
+            payload = verify_admin_token(token)
+            
+            sb.rpc("log_admin_activity", {
+                "p_admin_id": payload["admin_id"],
+                "p_acao": "desativar_admin",
+                "p_descricao": f"Admin {admin_id} foi desativado"
+            }).execute()
+        except:
+            pass
+        
+        return success(message="Administrador desativado com sucesso")
+    except Exception as e:
+        return error(f"Erro ao desativar administrador: {str(e)}", 500)
+
+
+@auth_bp.post("/admin/activate/<admin_id>")
+@require_admin_token
+def activate_admin(admin_id):
+    """Ativa um administrador."""
+    sb = get_supabase_admin()
+    
+    try:
+        # Verifica se admin existe
+        resp = sb.table("admin_users") \
+            .select("id") \
+            .eq("id", admin_id) \
+            .execute()
+        
+        if not resp.data:
+            return error("Administrador não encontrado", 404)
+        
+        # Ativa o admin
+        sb.table("admin_users") \
+            .update({"ativo": True}) \
+            .eq("id", admin_id) \
+            .execute()
+        
+        # Log da ação
+        try:
+            auth_header = request.headers.get("Authorization", "")
+            token = auth_header[7:]
+            payload = verify_admin_token(token)
+            
+            sb.rpc("log_admin_activity", {
+                "p_admin_id": payload["admin_id"],
+                "p_acao": "ativar_admin",
+                "p_descricao": f"Admin {admin_id} foi ativado"
+            }).execute()
+        except:
+            pass
+        
+        return success(message="Administrador ativado com sucesso")
+    except Exception as e:
+        return error(f"Erro ao ativar administrador: {str(e)}", 500)
+
+
+@auth_bp.delete("/admin/<admin_id>")
+@require_admin_token
+def delete_admin(admin_id):
+    """Deleta um administrador."""
+    sb = get_supabase_admin()
+    
+    try:
+        # Verifica se admin existe
+        resp = sb.table("admin_users") \
+            .select("id") \
+            .eq("id", admin_id) \
+            .execute()
+        
+        if not resp.data:
+            return error("Administrador não encontrado", 404)
+        
+        # Deleta o admin
+        sb.table("admin_users") \
+            .delete() \
+            .eq("id", admin_id) \
+            .execute()
+        
+        # Log da ação
+        try:
+            auth_header = request.headers.get("Authorization", "")
+            token = auth_header[7:]
+            payload = verify_admin_token(token)
+            
+            sb.rpc("log_admin_activity", {
+                "p_admin_id": payload["admin_id"],
+                "p_acao": "deletar_admin",
+                "p_descricao": f"Admin {admin_id} foi deletado"
+            }).execute()
+        except:
+            pass
+        
+        return success(message="Administrador deletado com sucesso")
+    except Exception as e:
+        return error(f"Erro ao deletar administrador: {str(e)}", 500)
+

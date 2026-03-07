@@ -10,10 +10,33 @@ Para criar a tabela no Supabase, execute este SQL:
   );
 """
 from flask import Blueprint, request, jsonify
-from ..routes.superadmin import require_superadmin
+from functools import wraps
+import os
 from ..utils.supabase_client import get_supabase_admin
 
 settings_bp = Blueprint('settings', __name__)
+
+# ─── Auth guard ───────────────────────────────────────────
+def require_superadmin(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        token    = request.headers.get("Authorization", "").replace("Bearer ", "").strip()
+        sa_token = os.getenv("SUPERADMIN_SECRET", "")
+        if sa_token and token == sa_token:
+            return f(*args, **kwargs)
+        try:
+            sb        = get_supabase_admin()
+            user_resp = sb.auth.get_user(token)
+            if not user_resp or not user_resp.user:
+                return jsonify({"error": "Nao autorizado"}), 401
+            email = user_resp.user.email or ""
+            SUPERADMIN_EMAIL = os.getenv("SUPERADMIN_EMAIL", "")
+            if SUPERADMIN_EMAIL and email != SUPERADMIN_EMAIL:
+                return jsonify({"error": "Acesso negado"}), 403
+            return f(*args, **kwargs)
+        except Exception as e:
+            return jsonify({"error": str(e)}), 401
+    return decorated
 
 
 @settings_bp.get('/settings')

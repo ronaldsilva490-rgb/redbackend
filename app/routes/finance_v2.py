@@ -1,6 +1,6 @@
 """
-app/routes/finance.py
-API endpoints para gerenciar finanças e transações
+app/routes/finance_v2.py
+API endpoints para gerenciar finanças e transações (v2)
 """
 
 from flask import Blueprint, request, jsonify
@@ -11,11 +11,11 @@ import uuid
 from app.utils.supabase_client import supabase
 from app.utils.auth_middleware import token_required
 
-finance_bp = Blueprint('finance', __name__, url_prefix='/api/finance')
+finance_v2_bp = Blueprint('finance_v2', __name__, url_prefix='/api/finance/v2')
 
 # ═══════════════════════════════════════════════════════════════════════════
 
-@finance_bp.route('/transacoes', methods=['GET'])
+@finance_v2_bp.route('/transacoes', methods=['GET'])
 @cross_origin()
 @token_required
 def listar_transacoes(current_user):
@@ -81,7 +81,7 @@ def listar_transacoes(current_user):
         return jsonify({'erro': str(e)}), 500
 
 
-@finance_bp.route('/transacao', methods=['POST'])
+@finance_v2_bp.route('/transacao', methods=['POST'])
 @cross_origin()
 @token_required
 def criar_transacao(current_user):
@@ -144,7 +144,7 @@ def criar_transacao(current_user):
         return jsonify({'erro': str(e)}), 500
 
 
-@finance_bp.route('/transacao/<transacao_id>', methods=['PUT'])
+@finance_v2_bp.route('/transacao/<transacao_id>', methods=['PUT'])
 @cross_origin()
 @token_required
 def atualizar_transacao(current_user, transacao_id):
@@ -173,7 +173,7 @@ def atualizar_transacao(current_user, transacao_id):
         return jsonify({'erro': str(e)}), 500
 
 
-@finance_bp.route('/transacao/<transacao_id>/pagar', methods=['POST'])
+@finance_v2_bp.route('/transacao/<transacao_id>/pagar', methods=['POST'])
 @cross_origin()
 @token_required
 def marcar_pago(current_user, transacao_id):
@@ -204,7 +204,7 @@ def marcar_pago(current_user, transacao_id):
         return jsonify({'erro': str(e)}), 500
 
 
-@finance_bp.route('/relatorio', methods=['GET'])
+@finance_v2_bp.route('/relatorio', methods=['GET'])
 @cross_origin()
 @token_required
 def relatorio_financeiro(current_user):
@@ -298,7 +298,7 @@ def relatorio_financeiro(current_user):
         return jsonify({'erro': str(e)}), 500
 
 
-@finance_bp.route('/Dashboard', methods=['GET'])
+@finance_v2_bp.route('/Dashboard', methods=['GET'])
 @cross_origin()
 @token_required
 def dashboard(current_user):
