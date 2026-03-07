@@ -12,26 +12,26 @@ GROQ_API_KEY = os.environ.get('GROQ_API_KEY', '')
 
 # Modelos disponíveis no Groq
 MODELOS_DISPONIVEIS = {
-    "mixtral-8x7b-32768": {
-        "name": "Mixtral 8x7b (Recomendado)",
-        "description": "Rápido e muito capaz para código",
+    "llama-3.1-70b-versatile": {
+        "name": "Llama 3.1 70B Versatile (Recomendado)",
+        "description": "Modelo mais recente, excelente para código",
         "pricing_tier": "GRÁTIS",
         "is_recommended": True,
         "best_for": "Análise e modificação de código"
     },
-    "llama2-70b-4096": {
-        "name": "Llama 2 70B",
-        "description": "Excelente compreensão contextual",
-        "pricing_tier": "GRÁTIS",
-        "is_recommended": True,
-        "best_for": "Tarefas complexas"
-    },
-    "gemma-7b-it": {
-        "name": "Gemma 7B",
-        "description": "Leve e eficiente",
+    "llama-3.1-8b-instant": {
+        "name": "Llama 3.1 8B Instant",
+        "description": "Rápido e eficiente",
         "pricing_tier": "GRÁTIS",
         "is_recommended": False,
-        "best_for": "Iterações rápidas"
+        "best_for": "Respostas rápidas"
+    },
+    "llama3-70b-8192": {
+        "name": "Llama 3 70B",
+        "description": "Modelo anterior, ainda funciona",
+        "pricing_tier": "GRÁTIS",
+        "is_recommended": False,
+        "best_for": "Compatibilidade"
     }
 }
 
@@ -152,7 +152,7 @@ def conversar_ia():
         
         prompt = dados.get('prompt', '').strip()
         chave_api = dados.get('api_key', '').strip()
-        modelo = dados.get('modelo', 'mixtral-8x7b-32768')
+        modelo = dados.get('modelo', 'llama-3.1-70b-versatile')
         
         print(f"  prompt: {prompt[:50] if prompt else 'vazio'}...")
         print(f"  chave: {chave_api[:20] if chave_api else 'vazio'}...")
