@@ -61,9 +61,21 @@ def log_request_middleware(app):
             if not hasattr(g, 'start_time'):
                 return response
             
-            duration_ms = round((time.perf_counter() - g.start_time) * 1000)
             method = request.method
             path = request.path
+            
+            # ⚠️ SUPER IMPORTANTE: Pular logging de rotas de logs para evitar recursão infinita!
+            # Se log for registrado aqui, vai criar uma requisição POST para /api/superadmin/logs
+            # que vai criar outro log, etc. Então BLOQUEAMOS tudo que é /api/superadmin/logs
+            if path.startswith('/api/superadmin/logs'):
+                return response
+            
+            # Pula assets estáticos
+            skip_static = ['/static/', '.js', '.css', '.png', '.jpg', '.svg', '.ico', '.woff']
+            if any(skip in path for skip in skip_static):
+                return response
+            
+            duration_ms = round((time.perf_counter() - g.start_time) * 1000)
             status = response.status_code
             ip = request.remote_addr or 'unknown'
             
@@ -78,11 +90,6 @@ def log_request_middleware(app):
             # Filtra algumas rotas chatas (health checks)
             if path in ['/', '/health']:
                 level = 'debug'
-            
-            # Pula logging de certas rotas para não poluir (especialmente logs recursivos!)
-            skip_paths = ['/static/', '.js', '.css', '.png', '.jpg', '/api/superadmin/logs', '/api/superadmin/logs/']
-            if any(skip in path for skip in skip_paths):
-                return response
             
             # Monta mensagem
             message = f"{method} {path} → {status}"
