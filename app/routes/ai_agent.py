@@ -1,60 +1,60 @@
-"""Rotas do Agente de IA para análise e modificação de código via OpenRouter"""
+"""Rotas do Agente de IA para análise e modificação de código via Groq"""
 import requests
 import json
+import os
 from flask import Blueprint, request, jsonify
 
 ai_agent_bp = Blueprint('ai_agent', __name__, url_prefix='/api/superadmin/ai-agent')
 
-# OpenRouter API
-OPENROUTER_API = "https://api.openrouter.io/api/v1"
+# Groq API
+GROQ_API = "https://api.groq.com/openai/v1"
+GROQ_API_KEY = os.environ.get('GROQ_API_KEY', '')
 
-# Modelos recomendados para desenvolvimento
-MODELOS_RECOMENDADOS = {
-    "openrouter/auto": {
-        "name": "OpenRouter Auto (Recomendado)",
-        "description": "Seleciona automaticamente o melhor modelo livre",
-        "pricing_tier": "GRÁTIS",
-        "is_recommended": True,
-        "best_for": "Tarefas gerais de desenvolvimento"
-    },
-    "meta-llama/llama-2-70b-chat": {
-        "name": "Llama 2 70B (Excelente)",
-        "description": "Alta qualidade, muito capaz para código",
+# Modelos disponíveis no Groq
+MODELOS_DISPONIVEIS = {
+    "mixtral-8x7b-32768": {
+        "name": "Mixtral 8x7b (Recomendado)",
+        "description": "Rápido e muito capaz para código",
         "pricing_tier": "GRÁTIS",
         "is_recommended": True,
         "best_for": "Análise e modificação de código"
     },
-    "mistralai/mistral-7b-instruct": {
-        "name": "Mistral 7B",
-        "description": "Rápido e preciso",
+    "llama2-70b-4096": {
+        "name": "Llama 2 70B",
+        "description": "Excelente compreensão contextual",
         "pricing_tier": "GRÁTIS",
         "is_recommended": True,
+        "best_for": "Tarefas complexas"
+    },
+    "gemma-7b-it": {
+        "name": "Gemma 7B",
+        "description": "Leve e eficiente",
+        "pricing_tier": "GRÁTIS",
+        "is_recommended": False,
         "best_for": "Iterações rápidas"
     }
 }
 
 
 def validar_chave_api(chave_api):
-    """Validar chave de API do OpenRouter"""
+    """Validar chave de API do Groq"""
     try:
-        print(f"🔍 Validando chave de API: {chave_api[:15]}...")
+        print(f"🔍 Validando chave Groq: {chave_api[:15]}...")
         print(f"   Comprimento da chave: {len(chave_api)}")
         headers = {
             "Authorization": f"Bearer {chave_api}",
-            "HTTP-Referer": "https://redcomercialweb.vercel.app",
-            "X-Title": "RedCommercial AI Agent",
             "Content-Type": "application/json"
         }
         print(f"   Headers: {list(headers.keys())}")
         resposta = requests.get(
-            f"{OPENROUTER_API}/models",
+            f"{GROQ_API}/models",
             headers=headers,
             timeout=10
         )
         print(f"   Status: {resposta.status_code}")
         
         if resposta.status_code == 200:
-            print(f"✓ Chave de API válida")
+            print(f"✓ Chave Groq válida")
             return True
         else:
             print(f"❌ Erro: status {resposta.status_code}")
@@ -62,10 +62,10 @@ def validar_chave_api(chave_api):
             return False
             
     except requests.exceptions.Timeout:
-        print("❌ Timeout ao conectar ao OpenRouter")
+        print("❌ Timeout ao conectar ao Groq")
         return False
     except requests.exceptions.ConnectionError:
-        print("❌ Erro de conexão ao OpenRouter")
+        print("❌ Erro de conexão ao Groq")
         return False
     except Exception as e:
         print(f"❌ Erro ao validar chave: {type(e).__name__}: {e}")
@@ -74,7 +74,7 @@ def validar_chave_api(chave_api):
 
 @ai_agent_bp.route('/validate-key', methods=['POST'])
 def validar_chave():
-    """Validar chave de API do OpenRouter"""
+    """Validar chave de API do Groq"""
     try:
         dados = request.get_json() or {}
         chave_api = dados.get('api_key', '').strip()
@@ -86,7 +86,7 @@ def validar_chave():
                 "erro": "Chave de API não fornecida"
             }), 400
         
-        print(f"📝 Validando chave de API...")
+        print(f"📝 Validando chave Groq...")
         valida = validar_chave_api(chave_api)
         
         return jsonify({
@@ -106,67 +106,29 @@ def validar_chave():
 
 @ai_agent_bp.route('/models', methods=['POST', 'GET'])
 def obter_modelos():
-    """Obter lista de modelos disponíveis do OpenRouter"""
+    """Obter lista de modelos disponíveis do Groq"""
     try:
-        # Aceitar chave tanto por GET header quanto POST body
-        if request.method == 'POST':
-            dados = request.get_json() or {}
-            chave_api = dados.get('api_key') or request.headers.get('X-API-Key') or request.headers.get('Authorization', '').replace('Bearer ', '')
-        else:
-            chave_api = request.headers.get('X-API-Key') or request.headers.get('Authorization', '').replace('Bearer ', '')
+        # Para o Groq, vamos retornar os modelos conhecidos
+        # porque a API de modelos pode ter limitações
+        print(f"📥 Retornando modelos do Groq...")
         
-        if not chave_api:
-            return jsonify({"erro": "Chave de API obrigatória"}), 400
-        
-        print(f"📥 Buscando modelos com chave: {chave_api[:20]}...")
-        
-        headers = {
-            "Authorization": f"Bearer {chave_api}",
-            "HTTP-Referer": "https://redcomercialweb.vercel.app",
-            "X-Title": "RedCommercial AI Agent",
-            "Content-Type": "application/json"
-        }
-        
-        print(f"Headers: {list(headers.keys())}")
-        
-        resposta = requests.get(
-            f"{OPENROUTER_API}/models",
-            headers=headers,
-            timeout=10
-        )
-        
-        print(f"Status OpenRouter: {resposta.status_code}")
-        
-        if resposta.status_code == 401:
-            return jsonify({"erro": "Chave de API inválida ou expirada"}), 401
-        
-        if resposta.status_code != 200:
-            print(f"❌ Erro {resposta.status_code}: {resposta.text[:300]}")
-            return jsonify({"erro": f"Erro ao buscar modelos: {resposta.status_code}"}), 400
-        
-        todos_modelos = resposta.json().get('data', [])
-        print(f"✓ Recebidos {len(todos_modelos)} modelos do OpenRouter")
-        
-        # Processar e retornar modelos como está
-        modelos_processados = []
-        for m in todos_modelos:
-            modelos_processados.append({
-                "id": m.get('id'),
-                "name": m.get('name', m.get('id')),
-                "description": m.get('description', ''),
-                "pricing": m.get('pricing', {}),
-                "is_recommended": m.get('id') in MODELOS_RECOMENDADOS
+        # Converter para formato de resposta similar
+        modelos_formatados = []
+        for id_modelo, info in MODELOS_DISPONIVEIS.items():
+            modelos_formatados.append({
+                "id": id_modelo,
+                "name": info["name"],
+                "description": info["description"],
+                "pricing": {"input": 0, "output": 0},
+                "is_recommended": info["is_recommended"]
             })
         
-        # Ordenar com recomendados primeiro
-        modelos_processados.sort(key=lambda x: (not x.get('is_recommended', False), x['name']))
-        
-        print(f"✓ Retornando {len(modelos_processados)} modelos processados")
+        print(f"✓ Retornando {len(modelos_formatados)} modelos do Groq")
         
         return jsonify({
             "sucesso": True,
-            "data": modelos_processados,
-            "total": len(modelos_processados)
+            "data": modelos_formatados,
+            "total": len(modelos_formatados)
         }), 200
     
     except Exception as e:
@@ -178,19 +140,19 @@ def obter_modelos():
 
 @ai_agent_bp.route('/chat', methods=['POST'])
 def conversar_ia():
-    """Chat com IA para análise e modificação de código"""
+    """Chat com IA para análise e modificação de código via Groq"""
     try:
         dados = request.json or {}
         prompt = dados.get('prompt', '').strip()
         chave_api = dados.get('api_key', '').strip()
-        modelo = dados.get('modelo', 'openrouter/auto')
+        modelo = dados.get('modelo', 'mixtral-8x7b-32768')
         
         if not prompt or not chave_api:
             return jsonify({
-                "erro": "Prompt e chave_api são obrigatórios"
+                "erro": "Prompt e api_key são obrigatórios"
             }), 400
         
-        print(f"🤖 Enviando prompt para IA...")
+        print(f"🤖 Enviando prompt para Groq via modelo: {modelo}")
         
         if not validar_chave_api(chave_api):
             return jsonify({
@@ -199,8 +161,6 @@ def conversar_ia():
         
         headers = {
             "Authorization": f"Bearer {chave_api}",
-            "HTTP-Referer": "https://redcomercialweb.vercel.app",
-            "X-Title": "RedCommercial AI Agent",
             "Content-Type": "application/json"
         }
         
@@ -220,9 +180,9 @@ def conversar_ia():
             "max_tokens": 2000
         }
         
-        print(f"📤 Chamando API OpenRouter com modelo: {modelo}")
+        print(f"📤 Chamando API Groq com modelo: {modelo}")
         resposta = requests.post(
-            f"{OPENROUTER_API}/chat/completions",
+            f"{GROQ_API}/chat/completions",
             headers=headers,
             json=carga,
             timeout=60
@@ -234,7 +194,7 @@ def conversar_ia():
             erro_msg = resposta.text or "Erro desconhecido"
             print(f"❌ Erro na API: {erro_msg}")
             return jsonify({
-                "erro": f"Erro ao chamar API OpenRouter: {erro_msg}",
+                "erro": f"Erro ao chamar API Groq: {erro_msg}",
                 "status": resposta.status_code
             }), resposta.status_code
         
@@ -258,3 +218,78 @@ def conversar_ia():
         return jsonify({
             "erro": f"Erro ao processar: {str(e)}"
         }), 500
+
+
+@ai_agent_bp.route('/debug-connection', methods=['GET'])
+def debug_conexao():
+    """Debug endpoint para testar conectividade"""
+    import socket
+    import ssl
+    from urllib.parse import urlparse
+    
+    print("\n" + "="*60)
+    print("🔍 TESTANDO CONECTIVIDADE")
+    print("="*60)
+    
+    debug_info = {
+        "timestamp": str(__import__('datetime').datetime.now()),
+        "tests": {}
+    }
+    
+    # Test 1: httpbin (site genérico para teste)
+    print("\n1️⃣ TESTANDO httpbin.org (site de teste)...")
+    try:
+        resposta = requests.get("https://httpbin.org/get", timeout=10)
+        print(f"✓ httpbin.org respondeu com status {resposta.status_code}")
+        debug_info["tests"]["httpbin"] = {
+            "status": "OK",
+            "http_status": resposta.status_code
+        }
+    except Exception as e:
+        print(f"❌ Erro com httpbin: {e}")
+        debug_info["tests"]["httpbin"] = {"status": "FAILED", "error": str(e)}
+    
+    # Test 2: Google (site mais genérico ainda)
+    print("\n2️⃣ TESTANDO google.com...")
+    try:
+        resposta = requests.get("https://www.google.com", timeout=10)
+        print(f"✓ Google respondeu com status {resposta.status_code}")
+        debug_info["tests"]["google"] = {
+            "status": "OK",
+            "http_status": resposta.status_code
+        }
+    except Exception as e:
+        print(f"❌ Erro com Google: {e}")
+        debug_info["tests"]["google"] = {"status": "FAILED", "error": str(e)}
+    
+    # Test 3: Groq (novo)
+    print("\n3️⃣ TESTANDO api.groq.com...")
+    try:
+        resposta = requests.get("https://api.groq.com/openai/v1/models", timeout=10)
+        print(f"✓ Groq respondeu com status {resposta.status_code}")
+        debug_info["tests"]["groq"] = {
+            "status": "OK",
+            "http_status": resposta.status_code
+        }
+    except Exception as e:
+        print(f"❌ Erro com Groq: {e}")
+        debug_info["tests"]["groq"] = {"status": "FAILED", "error": str(e)[:200]}
+    
+    print("\n" + "="*60)
+    print("📊 RESULTADO")
+    print("="*60)
+    httpbin_ok = debug_info["tests"].get("httpbin", {}).get("status") == "OK"
+    google_ok = debug_info["tests"].get("google", {}).get("status") == "OK"
+    groq_ok = debug_info["tests"].get("groq", {}).get("status") == "OK"
+    
+    if not httpbin_ok and not google_ok:
+        print("❌ Container NÃO consegue fazer nenhuma requisição HTTPS pra fora")
+        print("   Problema: Fly.io bloqueou acesso externo")
+    elif not groq_ok:
+        print("⚠️  Container consegue fazer HTTPS (httpbin/google OK)")
+        print("   MAS Groq especificamente não funciona")
+        print("   Problema: Fly.io bloqueou especificamente Groq OU DNS")
+    else:
+        print("✓ Tudo OK! Container consegue conectar com Groq")
+    
+    return jsonify(debug_info), 200
