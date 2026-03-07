@@ -10,28 +10,28 @@ ai_agent_bp = Blueprint('ai_agent', __name__, url_prefix='/api/superadmin/ai-age
 GROQ_API = "https://api.groq.com/openai/v1"
 GROQ_API_KEY = os.environ.get('GROQ_API_KEY', '')
 
-# Modelos disponíveis no Groq
+# Modelos disponíveis no Groq (verificado em 2026-03-07)
 MODELOS_DISPONIVEIS = {
-    "llama-3.1-70b-versatile": {
-        "name": "Llama 3.1 70B Versatile (Recomendado)",
-        "description": "Modelo mais recente, excelente para código",
+    "llama-3.1-8b-instant": {
+        "name": "Llama 3.1 8B Instant (Recomendado)",
+        "description": "Rápido e eficiente, perfeito para testes",
         "pricing_tier": "GRÁTIS",
         "is_recommended": True,
-        "best_for": "Análise e modificação de código"
-    },
-    "llama-3.1-8b-instant": {
-        "name": "Llama 3.1 8B Instant",
-        "description": "Rápido e eficiente",
-        "pricing_tier": "GRÁTIS",
-        "is_recommended": False,
-        "best_for": "Respostas rápidas"
+        "best_for": "Respostas rápidas e iterações"
     },
     "llama3-70b-8192": {
         "name": "Llama 3 70B",
-        "description": "Modelo anterior, ainda funciona",
+        "description": "Modelo anterior, excelente para tarefas complexas",
         "pricing_tier": "GRÁTIS",
         "is_recommended": False,
-        "best_for": "Compatibilidade"
+        "best_for": "Análise e modificação de código"
+    },
+    "gemma-7b-it": {
+        "name": "Gemma 7B",
+        "description": "Leve e rápido",
+        "pricing_tier": "GRÁTIS",
+        "is_recommended": False,
+        "best_for": "Respostas muito rápidas"
     }
 }
 
@@ -152,7 +152,7 @@ def conversar_ia():
         
         prompt = dados.get('prompt', '').strip()
         chave_api = dados.get('api_key', '').strip()
-        modelo = dados.get('modelo', 'llama-3.1-70b-versatile')
+        modelo = dados.get('modelo', 'llama-3.1-8b-instant')
         
         print(f"  prompt: {prompt[:50] if prompt else 'vazio'}...")
         print(f"  chave: {chave_api[:20] if chave_api else 'vazio'}...")
