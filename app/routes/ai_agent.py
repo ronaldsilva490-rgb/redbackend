@@ -9,16 +9,265 @@ ai_agent_bp = Blueprint('ai_agent', __name__, url_prefix='/api/superadmin/ai-age
 OPENROUTER_API = "https://api.openrouter.io/api/v1"
 
 # Modelos recomendados para desenvolvimento
-MODELOS_RECOMENDADOS = {\n    \"openrouter/auto\": {
-        \"name\": \"OpenRouter Auto (Recomendado)\",
-        \"description\": \"Seleciona automaticamente o melhor modelo livre\",
-        \"pricing_tier\": \"GRÁTIS\",\n        \"is_recommended\": True,
-        \"best_for\": \"Tarefas gerais de desenvolvimento\"\n    },\n    \"meta-llama/llama-2-70b-chat\": {
-        \"name\": \"Llama 2 70B (Excelente)\",
-        \"description\": \"Alta qualidade, muito capaz para código\",
-        \"pricing_tier\": \"GRÁTIS\",\n        \"is_recommended\": True,
-        \"best_for\": \"Análise e modificação de código\"\n    },\n    \"mistralai/mistral-7b-instruct\": {
-        \"name\": \"Mistral 7B\",
-        \"description\": \"Rápido e preciso\",
-        \"pricing_tier\": \"GRÁTIS\",\n        \"is_recommended\": True,
-        \"best_for\": \"Iterações rápidas\"\n    }\n}\n\ndef validar_chave_api(chave_api):\n    \"\"\"Validar chave de API do OpenRouter\"\"\"\n    try:\n        print(f\"🔍 Validando chave de API: {chave_api[:15]}...\")\n        headers = {\n            \"Authorization\": f\"Bearer {chave_api}\",\n            \"HTTP-Referer\": \"https://redcomercialweb.vercel.app\",\n            \"X-Title\": \"RedCommercial AI Agent\",\n            \"Content-Type\": \"application/json\"\n        }\n        resposta = requests.get(\n            f\"{OPENROUTER_API}/models\",\n            headers=headers,\n            timeout=10\n        )\n        valida = resposta.status_code == 200\n        if valida:\n            print(f\"✓ Chave de API válida\")\n        else:\n            print(f\"❌ Erro: status {resposta.status_code}\")\n        return valida\n    except requests.exceptions.Timeout:\n        print(\"❌ Timeout ao conectar ao OpenRouter\")\n        return False\n    except requests.exceptions.ConnectionError:\n        print(\"❌ Erro de conexão ao OpenRouter\")\n        return False\n    except Exception as e:\n        print(f\"❌ Erro ao validar chave: {e}\")\n        return False\n\n@ai_agent_bp.route('/validate-key', methods=['POST'])\ndef validar_chave():\n    \"\"\"Validar chave de API do OpenRouter\"\"\"\n    try:\n        dados = request.get_json() or {}\n        chave_api = dados.get('api_key', '').strip()\n        \n        if not chave_api:\n            return jsonify({\n                \"valida\": False,\n                \"valid\": False,\n                \"erro\": \"Chave de API não fornecida\"\n            }), 400\n        \n        print(f\"📝 Validando chave de API...\")\n        valida = validar_chave_api(chave_api)\n        \n        return jsonify({\n            \"valida\": valida,\n            \"valid\": valida,\n            \"mensagem\": \"Chave de API válida\" if valida else \"Chave de API inválida ou expirada\"\n        }), 200\n    \n    except Exception as e:\n        print(f\"❌ Erro ao validar chave: {e}\")\n        return jsonify({\n            \"valida\": False,\n            \"valid\": False,\n            \"erro\": str(e)\n        }), 500\n\n\n@ai_agent_bp.route('/models', methods=['GET'])\ndef obter_modelos():\n    \"\"\"Obter lista de modelos disponíveis do OpenRouter\"\"\"\n    try:\n        chave_api = request.headers.get('X-API-Key')\n        if not chave_api:\n            return jsonify({\n                \"erro\": \"Chave de API obrigatória no header X-API-Key\"\n            }), 400\n        \n        print(f\"📥 Buscando modelos...\")\n        if not validar_chave_api(chave_api):\n            return jsonify({\n                \"erro\": \"Chave de API inválida ou expirada\"\n            }), 401\n        \n        headers = {\n            \"Authorization\": f\"Bearer {chave_api}\",\n            \"HTTP-Referer\": \"https://redcomercialweb.vercel.app\",\n            \"X-Title\": \"RedCommercial AI Agent\",\n            \"Content-Type\": \"application/json\"\n        }\n        \n        resposta = requests.get(\n            f\"{OPENROUTER_API}/models\",\n            headers=headers,\n            timeout=10\n        )\n        \n        if resposta.status_code != 200:\n            print(f\"❌ Erro ao buscar modelos: {resposta.status_code}\")\n            return jsonify({\n                \"erro\": \"Falha ao buscar modelos do OpenRouter\"\n            }), 400\n        \n        todos_modelos = resposta.json().get('data', [])\n        \n        modelos_livres = []\n        modelos_pagos = []\n        \n        for modelo in todos_modelos:\n            modelo_id = modelo.get('id', '')\n            preco = modelo.get('pricing', {})\n            \n            try:\n                eh_livre = (\n                    float(preco.get('prompt', 1)) == 0 and\n                    float(preco.get('completion', 1)) == 0\n                )\n            except:\n                eh_livre = False\n            \n            info_modelo = {\n                \"id\": modelo_id,\n                \"name\": modelo.get('name', modelo_id),\n                \"description\": modelo.get('description', ''),\n                \"is_recommended\": False,\n                \"best_for\": \"Desenvolvimento\",\n                \"pricing_tier\": \"GRÁTIS\" if eh_livre else \"PAGO\"\n            }\n            \n            # Marcar modelos recomendados\n            if modelo_id in MODELOS_RECOMENDADOS:\n                info_modelo.update(MODELOS_RECOMENDADOS[modelo_id])\n            elif eh_livre and any(palavra in modelo_id.lower() for palavra in ['llama', 'mistral', 'neural']):\n                info_modelo[\"is_recommended\"] = True\n            \n            if eh_livre:\n                modelos_livres.append(info_modelo)\n            else:\n                modelos_pagos.append(info_modelo)\n        \n        # Ordenar recomendados primeiro\n        modelos_livres.sort(key=lambda x: (not x.get('is_recommended', False), x['name']))\n        \n        print(f\"✓ {len(modelos_livres)} modelos livres encontrados\")\n        \n        return jsonify({\n            \"sucesso\": True,\n            \"modelos_livres\": modelos_livres,\n            \"modelos_pagos\": modelos_pagos[:10],\n            \"recomendado_para_desenvolvimento\": [m for m in modelos_livres if m.get('is_recommended')]\n        }), 200\n    \n    except Exception as e:\n        print(f\"❌ Erro ao buscar modelos: {e}\")\n        return jsonify({\n            \"erro\": f\"Erro ao buscar modelos: {str(e)}\"\n        }), 500\n\n\n@ai_agent_bp.route('/chat', methods=['POST'])\ndef conversar_ia():\n    \"\"\"Chat com IA para análise e modificação de código\"\"\"\n    try:\n        dados = request.json or {}\n        prompt = dados.get('prompt', '').strip()\n        chave_api = dados.get('api_key', '').strip()\n        modelo = dados.get('modelo', 'openrouter/auto')\n        \n        if not prompt or not chave_api:\n            return jsonify({\n                \"erro\": \"Prompt e chave_api são obrigatórios\"\n            }), 400\n        \n        print(f\"🤖 Enviando prompt para IA...\")\n        \n        if not validar_chave_api(chave_api):\n            return jsonify({\n                \"erro\": \"Chave de API inválida\"\n            }), 401\n        \n        headers = {\n            \"Authorization\": f\"Bearer {chave_api}\",\n            \"HTTP-Referer\": \"https://redcomercialweb.vercel.app\",\n            \"X-Title\": \"RedCommercial AI Agent\",\n            \"Content-Type\": \"application/json\"\n        }\n        \n        carga = {\n            \"model\": modelo,\n            \"messages\": [\n                {\n                    \"role\": \"system\",\n                    \"content\": \"Você é um assistente de desenvolvimento web especializado. Responda sempre em português do Brasil.\"\n                },\n                {\n                    \"role\": \"user\",\n                    \"content\": prompt\n                }\n            ],\n            \"temperature\": 0.7,\n            \"max_tokens\": 2000\n        }\n        \n        print(f\"📤 Chamando API OpenRouter com modelo: {modelo}\")\n        resposta = requests.post(\n            f\"{OPENROUTER_API}/chat/completions\",\n            headers=headers,\n            json=carga,\n            timeout=60\n        )\n        \n        print(f\"Status: {resposta.status_code}\")\n        \n        if resposta.status_code != 200:\n            erro_msg = resposta.text or \"Erro desconhecido\"\n            print(f\"❌ Erro na API: {erro_msg}\")\n            return jsonify({\n                \"erro\": f\"Erro ao chamar API OpenRouter: {erro_msg}\",\n                \"status\": resposta.status_code\n            }), resposta.status_code\n        \n        dados_resposta = resposta.json()\n        conteudo = dados_resposta.get('choices', [{}])[0].get('message', {}).get('content', 'Sem resposta')\n        \n        print(f\"✓ Resposta recebida da IA\")\n        \n        return jsonify({\n            \"sucesso\": True,\n            \"resposta\": conteudo\n        }), 200\n    \n    except requests.exceptions.Timeout:\n        print(\"❌ Timeout na requisição\")\n        return jsonify({\n            \"erro\": \"Timeout ao conectar com a IA. Tente novamente.\"\n        }), 504\n    except Exception as e:\n        print(f\"❌ Erro ao conversar com IA: {e}\")\n        return jsonify({\n            \"erro\": f\"Erro ao processar: {str(e)}\"\n        }), 500\n"}}
+MODELOS_RECOMENDADOS = {
+    "openrouter/auto": {
+        "name": "OpenRouter Auto (Recomendado)",
+        "description": "Seleciona automaticamente o melhor modelo livre",
+        "pricing_tier": "GRÁTIS",
+        "is_recommended": True,
+        "best_for": "Tarefas gerais de desenvolvimento"
+    },
+    "meta-llama/llama-2-70b-chat": {
+        "name": "Llama 2 70B (Excelente)",
+        "description": "Alta qualidade, muito capaz para código",
+        "pricing_tier": "GRÁTIS",
+        "is_recommended": True,
+        "best_for": "Análise e modificação de código"
+    },
+    "mistralai/mistral-7b-instruct": {
+        "name": "Mistral 7B",
+        "description": "Rápido e preciso",
+        "pricing_tier": "GRÁTIS",
+        "is_recommended": True,
+        "best_for": "Iterações rápidas"
+    }
+}
+
+
+def validar_chave_api(chave_api):
+    """Validar chave de API do OpenRouter"""
+    try:
+        print(f"🔍 Validando chave de API: {chave_api[:15]}...")
+        headers = {
+            "Authorization": f"Bearer {chave_api}",
+            "HTTP-Referer": "https://redcomercialweb.vercel.app",
+            "X-Title": "RedCommercial AI Agent",
+            "Content-Type": "application/json"
+        }
+        resposta = requests.get(
+            f"{OPENROUTER_API}/models",
+            headers=headers,
+            timeout=10
+        )
+        valida = resposta.status_code == 200
+        if valida:
+            print(f"✓ Chave de API válida")
+        else:
+            print(f"❌ Erro: status {resposta.status_code}")
+        return valida
+    except requests.exceptions.Timeout:
+        print("❌ Timeout ao conectar ao OpenRouter")
+        return False
+    except requests.exceptions.ConnectionError:
+        print("❌ Erro de conexão ao OpenRouter")
+        return False
+    except Exception as e:
+        print(f"❌ Erro ao validar chave: {e}")
+        return False
+
+
+@ai_agent_bp.route('/validate-key', methods=['POST'])
+def validar_chave():
+    """Validar chave de API do OpenRouter"""
+    try:
+        dados = request.get_json() or {}
+        chave_api = dados.get('api_key', '').strip()
+        
+        if not chave_api:
+            return jsonify({
+                "valida": False,
+                "valid": False,
+                "erro": "Chave de API não fornecida"
+            }), 400
+        
+        print(f"📝 Validando chave de API...")
+        valida = validar_chave_api(chave_api)
+        
+        return jsonify({
+            "valida": valida,
+            "valid": valida,
+            "mensagem": "Chave de API válida" if valida else "Chave de API inválida ou expirada"
+        }), 200
+    
+    except Exception as e:
+        print(f"❌ Erro ao validar chave: {e}")
+        return jsonify({
+            "valida": False,
+            "valid": False,
+            "erro": str(e)
+        }), 500
+
+
+@ai_agent_bp.route('/models', methods=['GET'])
+def obter_modelos():
+    """Obter lista de modelos disponíveis do OpenRouter"""
+    try:
+        chave_api = request.headers.get('X-API-Key')
+        if not chave_api:
+            return jsonify({
+                "erro": "Chave de API obrigatória no header X-API-Key"
+            }), 400
+        
+        print(f"📥 Buscando modelos...")
+        if not validar_chave_api(chave_api):
+            return jsonify({
+                "erro": "Chave de API inválida ou expirada"
+            }), 401
+        
+        headers = {
+            "Authorization": f"Bearer {chave_api}",
+            "HTTP-Referer": "https://redcomercialweb.vercel.app",
+            "X-Title": "RedCommercial AI Agent",
+            "Content-Type": "application/json"
+        }
+        
+        resposta = requests.get(
+            f"{OPENROUTER_API}/models",
+            headers=headers,
+            timeout=10
+        )
+        
+        if resposta.status_code != 200:
+            print(f"❌ Erro ao buscar modelos: {resposta.status_code}")
+            return jsonify({
+                "erro": "Falha ao buscar modelos do OpenRouter"
+            }), 400
+        
+        todos_modelos = resposta.json().get('data', [])
+        
+        modelos_livres = []
+        modelos_pagos = []
+        
+        for modelo in todos_modelos:
+            modelo_id = modelo.get('id', '')
+            preco = modelo.get('pricing', {})
+            
+            try:
+                eh_livre = (
+                    float(preco.get('prompt', 1)) == 0 and
+                    float(preco.get('completion', 1)) == 0
+                )
+            except:
+                eh_livre = False
+            
+            info_modelo = {
+                "id": modelo_id,
+                "name": modelo.get('name', modelo_id),
+                "description": modelo.get('description', ''),
+                "is_recommended": False,
+                "best_for": "Desenvolvimento",
+                "pricing_tier": "GRÁTIS" if eh_livre else "PAGO"
+            }
+            
+            # Marcar modelos recomendados
+            if modelo_id in MODELOS_RECOMENDADOS:
+                info_modelo.update(MODELOS_RECOMENDADOS[modelo_id])
+            elif eh_livre and any(palavra in modelo_id.lower() for palavra in ['llama', 'mistral', 'neural']):
+                info_modelo["is_recommended"] = True
+            
+            if eh_livre:
+                modelos_livres.append(info_modelo)
+            else:
+                modelos_pagos.append(info_modelo)
+        
+        # Ordenar recomendados primeiro
+        modelos_livres.sort(key=lambda x: (not x.get('is_recommended', False), x['name']))
+        
+        print(f"✓ {len(modelos_livres)} modelos livres encontrados")
+        
+        return jsonify({
+            "sucesso": True,
+            "modelos_livres": modelos_livres,
+            "modelos_pagos": modelos_pagos[:10],
+            "recomendado_para_desenvolvimento": [m for m in modelos_livres if m.get('is_recommended')]
+        }), 200
+    
+    except Exception as e:
+        print(f"❌ Erro ao buscar modelos: {e}")
+        return jsonify({
+            "erro": f"Erro ao buscar modelos: {str(e)}"
+        }), 500
+
+
+@ai_agent_bp.route('/chat', methods=['POST'])
+def conversar_ia():
+    """Chat com IA para análise e modificação de código"""
+    try:
+        dados = request.json or {}
+        prompt = dados.get('prompt', '').strip()
+        chave_api = dados.get('api_key', '').strip()
+        modelo = dados.get('modelo', 'openrouter/auto')
+        
+        if not prompt or not chave_api:
+            return jsonify({
+                "erro": "Prompt e chave_api são obrigatórios"
+            }), 400
+        
+        print(f"🤖 Enviando prompt para IA...")
+        
+        if not validar_chave_api(chave_api):
+            return jsonify({
+                "erro": "Chave de API inválida"
+            }), 401
+        
+        headers = {
+            "Authorization": f"Bearer {chave_api}",
+            "HTTP-Referer": "https://redcomercialweb.vercel.app",
+            "X-Title": "RedCommercial AI Agent",
+            "Content-Type": "application/json"
+        }
+        
+        carga = {
+            "model": modelo,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "Você é um assistente de desenvolvimento web especializado. Responda sempre em português do Brasil."
+                },
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ],
+            "temperature": 0.7,
+            "max_tokens": 2000
+        }
+        
+        print(f"📤 Chamando API OpenRouter com modelo: {modelo}")
+        resposta = requests.post(
+            f"{OPENROUTER_API}/chat/completions",
+            headers=headers,
+            json=carga,
+            timeout=60
+        )
+        
+        print(f"Status: {resposta.status_code}")
+        
+        if resposta.status_code != 200:
+            erro_msg = resposta.text or "Erro desconhecido"
+            print(f"❌ Erro na API: {erro_msg}")
+            return jsonify({
+                "erro": f"Erro ao chamar API OpenRouter: {erro_msg}",
+                "status": resposta.status_code
+            }), resposta.status_code
+        
+        dados_resposta = resposta.json()
+        conteudo = dados_resposta.get('choices', [{}])[0].get('message', {}).get('content', 'Sem resposta')
+        
+        print(f"✓ Resposta recebida da IA")
+        
+        return jsonify({
+            "sucesso": True,
+            "resposta": conteudo
+        }), 200
+    
+    except requests.exceptions.Timeout:
+        print("❌ Timeout na requisição")
+        return jsonify({
+            "erro": "Timeout ao conectar com a IA. Tente novamente."
+        }), 504
+    except Exception as e:
+        print(f"❌ Erro ao conversar com IA: {e}")
+        return jsonify({
+            "erro": f"Erro ao processar: {str(e)}"
+        }), 500
