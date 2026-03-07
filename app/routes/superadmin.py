@@ -106,7 +106,12 @@ def system_status():
         t0 = time.perf_counter()
         if VERCEL_TOKEN:
             r = requests.head("https://api.vercel.com/v9/projects", headers={"Authorization": f"Bearer {VERCEL_TOKEN}"}, timeout=8)
-            results["vercel"] = {"ok": r.status_code in [200, 405], "label": "Vercel Frontend", "latency_ms": round((time.perf_counter()-t0)*1000)}
+            latency = round((time.perf_counter()-t0)*1000)
+            if r.status_code in [200, 401, 403]:
+                # 401/403 = token inválido/expirado, mas ping funcionou
+                results["vercel"] = {"ok": r.status_code == 200, "label": "Vercel Frontend", "latency_ms": latency, "error": f"HTTP {r.status_code}" if r.status_code != 200 else None}
+            else:
+                results["vercel"] = {"ok": False, "label": "Vercel Frontend", "latency_ms": latency, "error": f"HTTP {r.status_code}"}
         else:
             results["vercel"] = {"ok": None, "label": "Vercel Frontend", "error": "Token nao configurado"}
     except Exception as e:
