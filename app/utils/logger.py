@@ -79,13 +79,13 @@ def log_request_middleware(app):
             if path in ['/', '/health']:
                 level = 'debug'
             
-            # Monta mensagem
-            message = f"{method} {path} → {status}"
-            
-            # Pula logging de certas rotas para não poluir
-            skip_paths = ['/static/', '.js', '.css', '.png', '.jpg']
+            # Pula logging de certas rotas para não poluir (especialmente logs recursivos!)
+            skip_paths = ['/static/', '.js', '.css', '.png', '.jpg', '/api/superadmin/logs', '/api/superadmin/logs/']
             if any(skip in path for skip in skip_paths):
                 return response
+            
+            # Monta mensagem
+            message = f"{method} {path} → {status}"
             
             # Prepara detalhes
             details = {
