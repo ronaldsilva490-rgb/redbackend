@@ -55,7 +55,7 @@ def create_app():
     app.register_blueprint(caixa_bp,       url_prefix="/api/caixa")
     app.register_blueprint(logs_bp,        url_prefix="/api/superadmin")
     app.register_blueprint(settings_bp,    url_prefix="/api/superadmin")
-    app.register_blueprint(ai_agent_bp,    url_prefix="/api/superadmin")
+    app.register_blueprint(ai_agent_bp)
 
     @app.get("/")
     def health():
