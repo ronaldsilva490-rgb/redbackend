@@ -1,0 +1,212 @@
+from flask import Blueprint, request
+from ..utils.supabase_client import get_supabase_admin
+from ..utils.auth_middleware import require_auth, require_papel
+from ..utils.response import success, error
+import re
+
+tenants_bp = Blueprint("tenants", __name__)
+INTERNAL_DOMAIN = "@red.internal"
+
+PAPEIS_VALIDOS = ("gerente", "vendedor", "caixa", "mecanico", "garcom", "cozinheiro", "entregador")
+
+
+def to_auth_email(login: str) -> str:
+    if "@" not in login:
+        return login.lower().strip() + INTERNAL_DOMAIN
+    return login.lower().strip()
+
+
+def validate_username(u: str) -> str | None:
+    """Retorna None se válido, mensagem de erro se inválido."""
+    if len(u) < 3:
+        return "Username deve ter ao menos 3 caracteres"
+    if len(u) > 30:
+        return "Username deve ter no máximo 30 caracteres"
+    if re.search(r'[^a-z0-9._-]', u.lower()):
+        return "Username só pode ter letras minúsculas, números, ponto, traço ou underline"
+    return None
+
+
+@tenants_bp.get("/me")
+@require_auth
+def get_my_tenant():
+    resp = get_supabase_admin().table("tenants") \
+        .select("*").eq("id", request.tenant_id).maybe_single().execute()
+    if not resp.data:
+        return error("Empresa não encontrada", 404)
+    return success(resp.data)
+
+
+@tenants_bp.put("/me")
+@require_auth
+@require_papel("dono", "gerente")
+def update_my_tenant():
+    body = request.get_json() or {}
+    for field in ("id", "slug", "plano", "created_at", "updated_at"):
+        body.pop(field, None)
+    for field in ("cnpj", "telefone", "email", "endereco", "cidade", "estado",
+                  "pix_chave", "pix_tipo", "pix_titular", "logo_url"):
+        if body.get(field) == "":
+            body[field] = None
+    resp = get_supabase_admin().table("tenants") \
+        .update(body).eq("id", request.tenant_id).execute()
+    if not resp.data:
+        return error("Empresa não encontrada", 404)
+    return success(resp.data[0], "Dados atualizados")
+
+
+@tenants_bp.get("/users")
+@require_auth
+@require_papel("dono", "gerente")
+def list_users():
+    sb   = get_supabase_admin()
+    resp = sb.table("tenant_users") \
+        .select("id, user_id, papel, ativo, username, created_at") \
+        .eq("tenant_id", request.tenant_id) \
+        .order("created_at") \
+        .execute()
+
+    users = []
+    for row in resp.data:
+        try:
+            auth_user = sb.auth.admin.get_user_by_id(row["user_id"])
+            email = auth_user.user.email if auth_user and auth_user.user else None
+            # Esconde domínio interno
+            if email and email.endswith(INTERNAL_DOMAIN):
+                row["email"] = None
+                row["display_login"] = row.get("username") or email.replace(INTERNAL_DOMAIN, "")
+            else:
+                row["email"] = email
+                row["display_login"] = email
+        except Exception:
+            row["email"] = None
+            row["display_login"] = row.get("username", "—")
+        users.append(row)
+    return success(users)
+
+
+@tenants_bp.post("/check-username")
+@require_auth
+@require_papel("dono", "gerente")
+def check_username_tenant():
+    """Verifica disponibilidade de username para novo funcionário."""
+    body     = request.get_json() or {}
+    username = body.get("username", "").strip().lower()
+    err = validate_username(username)
+    if err:
+        return error(err)
+
+    auth_email = to_auth_email(username)
+    sb = get_supabase_admin()
+    try:
+        users = sb.auth.admin.list_users()
+        for u in users:
+            if u.email == auth_email:
+                return success({"available": False, "username": username})
+        return success({"available": True, "username": username})
+    except Exception:
+        return success({"available": True, "username": username})
+
+
+@tenants_bp.patch("/users/<user_id>")
+@require_auth
+@require_papel("dono", "gerente")
+def update_user(user_id):
+    body  = request.get_json() or {}
+    papel = body.get("papel")
+    ativo = body.get("ativo")
+    update = {}
+    if papel is not None:
+        if papel not in PAPEIS_VALIDOS:
+            return error(f"Papel inválido. Use: {', '.join(PAPEIS_VALIDOS)}")
+        update["papel"] = papel
+    if ativo is not None:
+        update["ativo"] = bool(ativo)
+    if not update:
+        return error("Nenhum campo para atualizar")
+
+    sb   = get_supabase_admin()
+    resp = sb.table("tenant_users").update(update) \
+        .eq("user_id", user_id).eq("tenant_id", request.tenant_id).execute()
+    if not resp.data:
+        return error("Funcionário não encontrado", 404)
+    return success(resp.data[0], "Funcionário atualizado")
+
+
+@tenants_bp.delete("/users/<user_id>")
+@require_auth
+@require_papel("dono")
+def remove_user(user_id):
+    sb  = get_supabase_admin()
+    alvo = sb.table("tenant_users").select("papel") \
+        .eq("user_id", user_id).eq("tenant_id", request.tenant_id) \
+        .maybe_single().execute()
+    if alvo.data and alvo.data.get("papel") == "dono":
+        return error("Não é possível remover o dono da empresa")
+    sb.table("tenant_users") \
+        .delete().eq("user_id", user_id).eq("tenant_id", request.tenant_id).execute()
+    return success(message="Funcionário removido")
+
+
+@tenants_bp.post("/users/invite")
+@require_auth
+@require_papel("dono", "gerente")
+def invite_user():
+    """Cadastra novo funcionário com username ou email."""
+    body     = request.get_json() or {}
+    login    = body.get("login", "").strip()   # username ou email
+    password = body.get("password", "")
+    papel    = body.get("papel", "vendedor")
+
+    if not login or not password:
+        return error("Login e senha são obrigatórios")
+    if len(password) < 6:
+        return error("Senha deve ter no mínimo 6 caracteres")
+    if papel not in PAPEIS_VALIDOS:
+        return error(f"Papel inválido. Use: {', '.join(PAPEIS_VALIDOS)}")
+
+    is_username = "@" not in login
+    if is_username:
+        err = validate_username(login)
+        if err:
+            return error(err)
+
+    auth_email = to_auth_email(login)
+    sb = get_supabase_admin()
+
+    try:
+        auth_resp = sb.auth.admin.create_user({
+            "email":         auth_email,
+            "password":      password,
+            "email_confirm": True,
+        })
+        user_id = auth_resp.user.id
+    except Exception as e:
+        msg = str(e)
+        if "already registered" in msg or "already exists" in msg:
+            return error("Este login já está cadastrado no sistema", 409)
+        return error(f"Erro ao criar login: {msg}", 400)
+
+    existente = sb.table("tenant_users").select("id") \
+        .eq("user_id", user_id).eq("tenant_id", request.tenant_id).execute()
+    if existente.data:
+        return error("Este login já é funcionário desta empresa", 409)
+
+    try:
+        sb.table("tenant_users").insert({
+            "tenant_id": request.tenant_id,
+            "user_id":   user_id,
+            "papel":     papel,
+            "username":  login if is_username else None,
+            "ativo":     True,
+        }).execute()
+    except Exception as e:
+        try: sb.auth.admin.delete_user(user_id)
+        except: pass
+        return error(f"Erro ao vincular funcionário: {str(e)}", 500)
+
+    return success({
+        "user_id": user_id,
+        "login":   login,
+        "papel":   papel,
+    }, "Funcionário cadastrado com sucesso!", 201)
