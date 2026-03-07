@@ -4,7 +4,7 @@
 #
 
 app = 'redbackend'
-primary_region = 'iad'
+primary_region = 'gru'
 
 [build]
 
