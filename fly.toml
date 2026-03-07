@@ -1,22 +1,20 @@
-# fly.toml app configuration file generated for redbackend on 2026-03-07T03:44:26-03:00
-#
-# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
-#
+# fly.toml — configuração do app redbackend no Fly.io
+# Deploy via: fly deploy  OU  push no GitHub (GitHub Action cuida do resto)
 
-app = 'redbackend'
+app            = 'redbackend'
 primary_region = 'gru'
 
 [build]
 
 [http_service]
-  internal_port = 7860
-  force_https = true
-  auto_stop_machines = 'stop'
+  internal_port       = 7860
+  force_https         = true
+  auto_stop_machines  = 'stop'
   auto_start_machines = true
   min_machines_running = 0
-  processes = ['app']
+  processes           = ['app']
 
 [[vm]]
-  memory = '256mb'
-  cpus = 1
+  memory    = '256mb'
+  cpus      = 1
   memory_mb = 256
