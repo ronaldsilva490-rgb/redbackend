@@ -26,3 +26,13 @@ def get_supabase_admin() -> Client:
             current_app.config["SUPABASE_SERVICE_KEY"]
         )
     return _admin_client
+
+
+class _LazySupabaseClient:
+    """Lazy-loading proxy para o cliente Supabase anon."""
+    def __getattr__(self, name):
+        return getattr(get_supabase(), name)
+
+
+# Exporta um objeto que age como um cliente Supabase
+supabase = _LazySupabaseClient()
