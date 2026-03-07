@@ -1,0 +1,444 @@
+"""Rotas do Agente de IA para análise e modificação de código via OpenRouter"""
+import requests
+import json
+import os
+import re
+from flask import Blueprint, request, jsonify
+from pathlib import Path
+import ast
+import subprocess
+
+ai_agent_bp = Blueprint('ai_agent', __name__, url_prefix='/api/superadmin/ai-agent')
+
+# OpenRouter API
+OPENROUTER_API = "https://api.openrouter.io/api/v1"
+
+# Melhores modelos livres para desenvolvimento
+MODELOS_RECOMENDADOS = {
+    "openrouter/auto": {
+        "name": "OpenRouter Auto (Recomendado)",
+        "description": "Seleciona automaticamente o melhor modelo livre",
+        "pricing_tier": "GRÁTIS",
+        "is_recommended": True,
+        "best_for": "Tarefas gerais de desenvolvimento"
+    },
+    "meta-llama/llama-2-70b-chat": {
+        "name": "Llama 2 70B (Excelente)",
+        "description": "Alta qualidade, muito capaz para código",
+        "pricing_tier": "GRÁTIS",
+        "is_recommended": True,
+        "best_for": "Análise e modificação de código"
+    },
+    "mistralai/mistral-7b-instruct": {
+        "name": "Mistral 7B",
+        "description": "Rápido e preciso",
+        "pricing_tier": "GRÁTIS",
+        "is_recommended": True,
+        "best_for": "Iterações rápidas"
+    },
+    "NousResearch/Nous-Hermes-2-Mixtral-8x7B": {
+        "name": "Nous Hermes 2",
+        "description": "Bom para raciocínio complexo",
+        "pricing_tier": "GRÁTIS",
+        "is_recommended": True,
+        "best_for": "Lógica complexa"
+    }
+}
+
+def validar_chave_api(chave_api):
+    """Validar chave de API do OpenRouter"""
+    try:
+        print(f"🔍 Validando chave: {chave_api[:10]}...")
+        headers = {
+            "Authorization": f"Bearer {chave_api}",
+            "HTTP-Referer": "https://redcomercialweb.vercel.app",
+            "X-Title": "RedCommercial AI Agent"
+        }
+        resposta = requests.get(
+            f"{OPENROUTER_API}/models",
+            headers=headers,
+            timeout=10
+        )
+        valida = resposta.status_code == 200
+        if not valida and resposta.status_code == 401:
+            print(f"❌ Chave de API inválida (status 401)")
+        return valida
+    except Exception as e:
+        print(f"❌ Erro ao validar chave de API: {e}")
+        return False
+
+@ai_agent_bp.route('/validate-key', methods=['POST'])
+def validar_chave():
+    """Validar chave de API do OpenRouter"""
+    try:
+        dados = request.get_json() or {}
+        chave_api = dados.get('api_key', '').strip()
+        
+        if not chave_api:
+            return jsonify({"erro": "Chave de API não fornecida"}), 400
+        
+        print(f"📝 Validando chave de API...")
+        valida = validar_chave_api(chave_api)
+        
+        if valida:
+            print(f"✓ Chave de API válida")
+        else:
+            print(f"✗ Chave de API inválida")
+        
+        return jsonify({
+            "valida": valida,
+            "valid": valida,  # Compatibilidade
+            "mensagem": "Chave de API válida" if valida else "Chave de API inválida ou expirada"
+        }), 200
+    
+    except Exception as e:
+        print(f"❌ Erro ao validar chave: {e}")
+        return jsonify({"erro": str(e)}), 500
+    """Obter lista de modelos disponíveis do OpenRouter com recomendações"""
+    try:
+        api_key = request.headers.get('X-API-Key')
+        if not api_key:
+            return jsonify({"error": "Chave de API necessária no header X-API-Key"}), 400
+        
+        if not validate_api_key(api_key):
+            return jsonify({"error": "Chave de API inválida"}), 401
+        
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "HTTP-Referer": "http://localhost:3000",
+            "X-Title": "RedCommercial AI Agent"
+        }
+        
+        response = requests.get(
+            f"{OPENROUTER_API}/models",
+            headers=headers,
+            timeout=10
+        )
+        
+        if response.status_code != 200:
+            return jsonify({"error": "Failed to fetch models from OpenRouter"}), 400
+        
+        all_models = response.json().get('data', [])
+        
+        # Separate free and paid models
+        free_models = []
+        paid_models = []
+        
+        for model in all_models:
+            model_id = model.get('id', '')
+            pricing = model.get('pricing', {})
+            
+            # Check if it's free (both input and output are 0)
+            is_free = (
+                float(pricing.get('prompt', 1)) == 0 and
+                float(pricing.get('completion', 1)) == 0
+            )
+            
+            model_info = {
+                "id": model_id,
+                "name": model.get('name', model_id),
+                "description": model.get('description', ''),
+                "is_recommended": False,
+                "best_for": "Development",
+                "pricing_tier": "FREE" if is_free else "PAID"
+            }
+            
+            # Mark recommended models
+            if model_id in RECOMMENDED_FREE_MODELS:
+                model_info.update(RECOMMENDED_FREE_MODELS[model_id])
+            elif is_free and any(keyword in model_id.lower() for keyword in ['llama', 'mistral', 'neural', 'wizard']):
+                model_info["is_recommended"] = True
+            
+            if is_free:
+                free_models.append(model_info)
+            else:
+                paid_models.append(model_info)
+        
+        # Sort recommended first
+        free_models.sort(key=lambda x: (not x.get('is_recommended', False), x['name']))
+        
+        return jsonify({
+            "success": True,
+            "free_models": free_models,
+            "paid_models": paid_models[:10],  # Limit paid to 10
+            "recommended_for_development": [m for m in free_models if m.get('is_recommended')]
+        })
+    
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+def get_project_structure():
+    """Get project structure and relevant files"""
+    project_root = Path("/app").exists() and Path("/app") or Path(".")
+    
+    structure = {
+        "root": str(project_root),
+        "files": []
+    }
+    
+    # Get relevant source files
+    for pattern in ['**/*.py', '**/*.jsx', '**/*.js', '**/*.css', '**/*.json']:
+        for file_path in project_root.glob(pattern):
+            # Skip node_modules, __pycache__, .git, etc
+            if any(skip in str(file_path) for skip in ['node_modules', '__pycache__', '.git', 'venv', '.venv']):
+                continue
+            
+            try:
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                    # Only include files under 10KB to save tokens
+                    if len(content) < 10000:
+                        structure["files"].append({
+                            "path": str(file_path.relative_to(project_root)),
+                            "content": content,
+                            "language": file_path.suffix.lstrip('.')
+                        })
+            except Exception as e:
+                pass
+    
+    return structure
+
+def parse_ai_response(response_text):
+    """Parse AI response to extract code changes"""
+    changes = []
+    
+    # Look for code blocks marked with specific format
+    # Format: FILE: path/to/file.ext
+    # OLD:
+    # ```
+    # old code
+    # ```
+    # NEW:
+    # ```
+    # new code
+    # ```
+    
+    file_pattern = r'FILE:\s*([^\n]+)'
+    code_block_pattern = r'```(\w+)?\n(.*?)\n```'
+    
+    files = re.finditer(file_pattern, response_text)
+    
+    for file_match in files:
+        file_path = file_match.group(1).strip()
+        
+        # Find the next OLD: and NEW: blocks after this file
+        section = response_text[file_match.end():]
+        
+        old_match = re.search(r'OLD:\s*\n' + code_block_pattern, section, re.DOTALL)
+        new_match = re.search(r'NEW:\s*\n' + code_block_pattern, section, re.DOTALL)
+        
+        if old_match and new_match:
+            changes.append({
+                "file": file_path,
+                "old_code": old_match.group(2).strip(),
+                "new_code": new_match.group(2).strip(),
+                "type": "replace"
+            })
+    
+    return changes
+
+def apply_code_changes(changes, project_root="/app"):
+    """Apply code changes to files"""
+    if not Path(project_root).exists():
+        project_root = "."
+    
+    results = []
+    
+    for change in changes:
+        try:
+            file_path = Path(project_root) / change["file"]
+            
+            # Ensure file exists
+            if not file_path.exists():
+                results.append({
+                    "file": change["file"],
+                    "status": "error",
+                    "message": "File not found"
+                })
+                continue
+            
+            # Read file
+            with open(file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            
+            # Check if old code exists
+            if change["old_code"] not in content:
+                results.append({
+                    "file": change["file"],
+                    "status": "error",
+                    "message": "Old code not found in file"
+                })
+                continue
+            
+            # Replace code
+            new_content = content.replace(change["old_code"], change["new_code"])
+            
+            # Write back
+            with open(file_path, 'w', encoding='utf-8') as f:
+                f.write(new_content)
+            
+            results.append({
+                "file": change["file"],
+                "status": "success",
+                "message": "Code updated"
+            })
+        
+        except Exception as e:
+            results.append({
+                "file": change["file"],
+                "status": "error",
+                "message": str(e)
+            })
+    
+    return results
+
+@ai_agent_bp.route('/chat', methods=['POST'])
+def chat():
+    """Chat with AI and apply code changes"""
+    try:
+        data = request.json
+        user_prompt = data.get('prompt')
+        api_key = data.get('api_key')
+        model = data.get('model', 'openrouter/auto')
+        apply_changes_flag = data.get('apply_changes', True)
+        
+        if not user_prompt or not api_key:
+            return jsonify({"error": "Missing prompt or api_key"}), 400
+        
+        if not validate_api_key(api_key):
+            return jsonify({"error": "Invalid API key"}), 401
+        
+        # Get project structure for context
+        project_structure = get_project_structure()
+        
+        # Build system prompt with project context
+        system_prompt = f"""You are an expert full-stack developer analyzing a web application.
+
+PROJECT STRUCTURE:
+{json.dumps([f["path"] for f in project_structure["files"][:20]], indent=2)}
+
+PROJECT FILES:
+{json.dumps(project_structure["files"][:10], indent=2)}
+
+INSTRUCTIONS:
+1. Analyze the user's request
+2. Identify which files need to be changed
+3. Return changes in this EXACT format:
+
+FILE: path/to/file.ext
+OLD:
+```language
+old code here
+```
+NEW:
+```language
+new code here
+```
+
+FILE: another/file.ext
+OLD:
+```language
+old code
+```
+NEW:
+```language
+new code
+```
+
+Be precise. Only include the actual code that needs to change."""
+
+        # Call OpenRouter API
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "HTTP-Referer": "http://localhost:3000",
+            "X-Title": "RedCommercial AI Agent",
+            "Content-Type": "application/json"
+        }
+        
+        payload = {
+            "model": model,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": system_prompt
+                },
+                {
+                    "role": "user",
+                    "content": user_prompt
+                }
+            ],
+            "temperature": 0.7,
+            "max_tokens": 2000
+        }
+        
+        response = requests.post(
+            f"{OPENROUTER_API}/chat/completions",
+            headers=headers,
+            json=payload,
+            timeout=30
+        )
+        
+        if response.status_code != 200:
+            return jsonify({
+                "error": f"OpenRouter error: {response.status_code}",
+                "details": response.text
+            }), 400
+        
+        result = response.json()
+        ai_response = result['choices'][0]['message']['content']
+        
+        # Parse changes from response
+        changes = parse_ai_response(ai_response)
+        
+        changes_applied = []
+        if apply_changes_flag and changes:
+            changes_applied = apply_code_changes(changes)
+            
+            # Commit changes if any were successful
+            successful = [c for c in changes_applied if c['status'] == 'success']
+            if successful:
+                try:
+                    subprocess.run(
+                        ["git", "add", "-A"],
+                        cwd=".",
+                        capture_output=True
+                    )
+                    commit_msg = f"AI: {user_prompt[:50]}..."
+                    subprocess.run(
+                        ["git", "commit", "-m", commit_msg],
+                        cwd=".",
+                        capture_output=True
+                    )
+                except Exception as e:
+                    pass  # Git commit failed, but changes were applied
+        
+        return jsonify({
+            "success": True,
+            "ai_response": ai_response,
+            "changes_found": changes,
+            "changes_applied": changes_applied,
+            "model_used": model
+        })
+    
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@ai_agent_bp.route('/validate-key', methods=['POST'])
+def validate_key():
+    """Validate API key"""
+    try:
+        data = request.json
+        api_key = data.get('api_key')
+        
+        if not api_key:
+            return jsonify({"error": "API key required"}), 400
+        
+        is_valid = validate_api_key(api_key)
+        
+        return jsonify({
+            "valid": is_valid,
+            "message": "Valid API key" if is_valid else "Invalid API key"
+        })
+    
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
