@@ -1,6 +1,7 @@
 from flask import Flask
 from flask_cors import CORS
 from .config import Config
+from .utils.logger import log_request_middleware
 
 
 def create_app():
@@ -14,6 +15,9 @@ def create_app():
         "http://localhost:3000",
     ]
     CORS(app, resources={r"/api/*": {"origins": allowed_origins}})
+    
+    # Ativa middleware de logging automático
+    log_request_middleware(app)
 
     from .routes.auth          import auth_bp
     from .routes.tenants       import tenants_bp
