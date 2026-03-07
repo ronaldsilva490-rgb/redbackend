@@ -84,46 +84,51 @@ def system_status():
     import time
     results = {}
 
-    # Backend Fly.io — sempre ok se chegou aqui
-    results["backend"] = {"ok": True, "label": "Backend Fly.io", "latency_ms": 0}
-
-    # Supabase
+    # Backend — ping para health endpoint (local, rápido)
     try:
-        t0 = time.time()
+        t0 = time.perf_counter()
+        r = requests.get(FLY_URL, timeout=8)
+        results["backend"] = {"ok": r.status_code == 200, "label": "Backend Fly.io", "latency_ms": round((time.perf_counter()-t0)*1000)}
+    except Exception as e:
+        results["backend"] = {"ok": False, "label": "Backend Fly.io", "error": str(e)[:80]}
+
+    # Supabase — ping simples
+    try:
+        t0 = time.perf_counter()
         sb = get_supabase_admin()
         sb.table("tenants").select("id").limit(1).execute()
-        results["supabase"] = {"ok": True, "label": "Supabase DB", "latency_ms": round((time.time()-t0)*1000)}
+        results["supabase"] = {"ok": True, "label": "Supabase DB", "latency_ms": round((time.perf_counter()-t0)*1000)}
     except Exception as e:
         results["supabase"] = {"ok": False, "label": "Supabase DB", "error": str(e)[:120]}
 
-    # Vercel
+    # Vercel — ping HEAD (mais rápido que GET)
     try:
-        t0 = time.time()
+        t0 = time.perf_counter()
         if VERCEL_TOKEN:
-            r = requests.get("https://api.vercel.com/v9/projects", headers={"Authorization": f"Bearer {VERCEL_TOKEN}"}, timeout=8)
-            results["vercel"] = {"ok": r.status_code == 200, "label": "Vercel Frontend", "latency_ms": round((time.time()-t0)*1000)}
+            r = requests.head("https://api.vercel.com/v9/projects", headers={"Authorization": f"Bearer {VERCEL_TOKEN}"}, timeout=8)
+            results["vercel"] = {"ok": r.status_code in [200, 405], "label": "Vercel Frontend", "latency_ms": round((time.perf_counter()-t0)*1000)}
         else:
             results["vercel"] = {"ok": None, "label": "Vercel Frontend", "error": "Token nao configurado"}
     except Exception as e:
         results["vercel"] = {"ok": False, "label": "Vercel Frontend", "error": str(e)[:80]}
 
-    # GitHub frontend
+    # GitHub frontend — ping HEAD
     try:
-        t0 = time.time()
+        t0 = time.perf_counter()
         if GITHUB_TOKEN and GITHUB_REPO:
-            r = requests.get(f"https://api.github.com/repos/{GITHUB_REPO}", headers={"Authorization": f"Bearer {GITHUB_TOKEN}"}, timeout=8)
-            results["github"] = {"ok": r.status_code == 200, "label": "GitHub Frontend", "latency_ms": round((time.time()-t0)*1000)}
+            r = requests.head(f"https://api.github.com/repos/{GITHUB_REPO}", headers={"Authorization": f"Bearer {GITHUB_TOKEN}"}, timeout=8)
+            results["github"] = {"ok": r.status_code in [200, 405], "label": "GitHub Frontend", "latency_ms": round((time.perf_counter()-t0)*1000)}
         else:
             results["github"] = {"ok": None, "label": "GitHub Frontend", "error": "GITHUB_REPO nao configurado"}
     except Exception as e:
         results["github"] = {"ok": False, "label": "GitHub Frontend", "error": str(e)[:80]}
 
-    # GitHub backend
+    # GitHub backend — ping HEAD
     try:
-        t0 = time.time()
+        t0 = time.perf_counter()
         if GITHUB_TOKEN and GITHUB_BACKEND_REPO:
-            r = requests.get(f"https://api.github.com/repos/{GITHUB_BACKEND_REPO}", headers={"Authorization": f"Bearer {GITHUB_TOKEN}"}, timeout=8)
-            results["github_backend"] = {"ok": r.status_code == 200, "label": "GitHub Backend", "latency_ms": round((time.time()-t0)*1000)}
+            r = requests.head(f"https://api.github.com/repos/{GITHUB_BACKEND_REPO}", headers={"Authorization": f"Bearer {GITHUB_TOKEN}"}, timeout=8)
+            results["github_backend"] = {"ok": r.status_code in [200, 405], "label": "GitHub Backend", "latency_ms": round((time.perf_counter()-t0)*1000)}
         else:
             results["github_backend"] = {"ok": None, "label": "GitHub Backend", "error": "GITHUB_BACKEND_REPO nao configurado"}
     except Exception as e:
