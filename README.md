@@ -29,3 +29,5 @@ API REST em Flask para o sistema RED de Gestão Comercial.
 - Flask 3.0
 - Supabase (PostgreSQL + Auth)
 - Gunicorn (produção)
+
+FUDIDO PRA CARALHO
