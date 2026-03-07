@@ -7,7 +7,7 @@ from flask import Blueprint, request, jsonify
 from flask_cors import cross_origin
 from datetime import datetime
 import uuid
-from app.utils.supabase_client import supabase
+from app.utils.supabase_client import get_supabase
 from app.utils.auth_middleware import token_required
 
 preferences_bp = Blueprint('preferences', __name__, url_prefix='/api/preferences')
@@ -24,7 +24,7 @@ def get_preferences(current_user):
         if not tenant_id:
             return jsonify({'erro': 'tenant_id obrigatório'}), 400
         
-        response = supabase.table('user_preferences')\
+        response = get_supabase().table('user_preferences')\
             .select('*')\
             .eq('tenant_id', tenant_id)\
             .eq('user_id', user_id)\
@@ -57,7 +57,7 @@ def save_preferences(current_user):
             return jsonify({'erro': 'tenant_id obrigatório'}), 400
         
         # Verificar se existe
-        exists = supabase.table('user_preferences')\
+        exists = get_supabase().table('user_preferences')\
             .select('id')\
             .eq('tenant_id', tenant_id)\
             .eq('user_id', user_id)\
@@ -67,7 +67,7 @@ def save_preferences(current_user):
         
         if exists.data:
             # Update
-            response = supabase.table('user_preferences')\
+            response = get_supabase().table('user_preferences')\
                 .update(prefs)\
                 .eq('tenant_id', tenant_id)\
                 .eq('user_id', user_id)\
@@ -78,7 +78,7 @@ def save_preferences(current_user):
             prefs['user_id'] = user_id
             prefs['id'] = str(uuid.uuid4())
             prefs['criado_em'] = datetime.now().isoformat()
-            response = supabase.table('user_preferences').insert(prefs).execute()
+            response = get_supabase().table('user_preferences').insert(prefs).execute()
         
         return jsonify({
             'sucesso': True,
@@ -102,7 +102,7 @@ def set_theme(current_user):
         if not tenant_id:
             return jsonify({'erro': 'tenant_id obrigatório'}), 400
         
-        response = supabase.table('user_preferences')\
+        response = get_supabase().table('user_preferences')\
             .update({'theme': theme})\
             .eq('tenant_id', tenant_id)\
             .eq('user_id', current_user.get('id'))\
@@ -123,7 +123,7 @@ def add_favorite_product(current_user):
         tenant_id = request.args.get('tenant_id')
         product_id = request.json.get('product_id')
         
-        response = supabase.table('user_preferences')\
+        response = get_supabase().table('user_preferences')\
             .select('favorite_products')\
             .eq('tenant_id', tenant_id)\
             .eq('user_id', current_user.get('id'))\
@@ -133,7 +133,7 @@ def add_favorite_product(current_user):
         if product_id not in favorites:
             favorites.append(product_id)
         
-        supabase.table('user_preferences')\
+        get_supabase().table('user_preferences')\
             .update({'favorite_products': favorites})\
             .eq('tenant_id', tenant_id)\
             .eq('user_id', current_user.get('id'))\
@@ -160,7 +160,7 @@ def create_default_preferences(tenant_id, user_id):
             'atualizado_em': datetime.now().isoformat()
         }
         
-        response = supabase.table('user_preferences').insert(default).execute()
+        response = get_supabase().table('user_preferences').insert(default).execute()
         
         return jsonify({
             'sucesso': True,
