@@ -4,7 +4,7 @@ import json
 import os
 from flask import Blueprint, request, jsonify
 
-ai_agent_bp = Blueprint('ai_agent', __name__, url_prefix='/api/superadmin/ai-agent')
+ai_agent_bp = Blueprint('ai_agent', __name__, url_prefix='/ai-agent')
 
 # Groq API
 GROQ_API = "https://api.groq.com/openai/v1"
