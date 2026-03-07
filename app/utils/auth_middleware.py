@@ -56,3 +56,7 @@ def require_papel(*papeis):
             return f(*args, **kwargs)
         return decorated
     return decorator
+
+
+# Alias para compatibilidade com rotas que usam @token_required
+token_required = require_auth
