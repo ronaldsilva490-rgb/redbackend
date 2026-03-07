@@ -1,6 +1,6 @@
 -- ============================================================================
 -- DISABLE RLS COMPLETE - RED Commerce Platform
--- Remove Row Level Security de TODAS as tabelas automaticamente
+-- Remove Row Level Security de TODAS as tabelas do schema PUBLIC automaticamente
 -- ============================================================================
 
 -- 1. REMOVE TODAS AS POLICIES EXISTENTES
@@ -31,7 +31,7 @@ BEGIN
     END LOOP;
 END $$;
 
--- 3. HABILITA ACESSO ANÔNIMO E AUTENTICADO EM TODAS AS TABELAS
+-- 3. HABILITA ACESSO ANÔNIMO E AUTENTICADO EM TODAS AS TABELAS DO PUBLIC
 DO $$
 DECLARE
     r RECORD;
@@ -46,13 +46,9 @@ BEGIN
     END LOOP;
 END $$;
 
--- 4. HABILITA ACESSO AO SCHEMA AUTH
-ALTER TABLE auth.users DISABLE ROW LEVEL SECURITY;
-GRANT SELECT, INSERT, UPDATE, DELETE ON auth.users TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON auth.users TO authenticated;
-
 -- ============================================================================
 -- RESULTADO ESPERADO
 -- ============================================================================
 -- Se você ver "Success" ou nenhuma mensagem de erro, RLS foi TOTALMENTE desabilitado!
--- Todas as ~30+ tabelas agora têm acesso público.
+-- Todas as tabelas do schema PUBLIC agora têm acesso público.
+-- (auth.users é protegido pelo Supabase, mas não precisa de RLS para funcionar)
