@@ -21,7 +21,7 @@ curl -I https://api.openrouter.io --max-time 5 || echo "⚠️  Curl failed (wil
 
 echo "✓ DNS configuration attempt complete"
 echo ""
-echo "🚀 Starting Flask app..."
+echo "🚀 Starting Flask app with Gunicorn..."
 
-# Inicia a aplicação
-exec python main.py
+# Inicia a aplicação com Gunicorn
+exec gunicorn --bind 0.0.0.0:7860 --workers 4 --worker-class sync --timeout 120 main:app
