@@ -93,6 +93,44 @@ def list_transactions():
     return success(data)
 
 
+
+@finance_bp.get("/contas-pagar")
+@require_auth
+def contas_pagar():
+    """Alias de /transactions filtrado por tipo=despesa com suporte a status."""
+    tid    = request.tenant_id
+    status = request.args.get("status", "todos")   # pendente | vencido | pago | todos
+    limit  = min(int(request.args.get("limit", 200)), 500)
+    offset = int(request.args.get("offset", 0))
+
+    sb   = get_supabase_admin()
+    hoje = date.today()
+
+    q = sb.table("transactions").select("*") \
+        .eq("tenant_id", tid) \
+        .eq("tipo", "despesa") \
+        .order("data_vencimento", desc=False)
+
+    if status == "pendente":
+        q = q.eq("pago", False).gte("data_vencimento", str(hoje))
+    elif status == "vencido":
+        q = q.eq("pago", False).lt("data_vencimento", str(hoje))
+    elif status == "pago":
+        q = q.eq("pago", True)
+    # "todos" → sem filtro extra
+
+    data = q.limit(limit).offset(offset).execute().data or []
+
+    for row in data:
+        if not row.get("pago") and row.get("data_vencimento"):
+            diff = (hoje - date.fromisoformat(row["data_vencimento"])).days
+            row["dias_atraso"] = max(0, diff)
+        else:
+            row["dias_atraso"] = 0
+
+    return success(data)
+
+
 @finance_bp.post("/transactions")
 @require_auth
 def create_transaction():
