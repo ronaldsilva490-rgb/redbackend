@@ -112,7 +112,6 @@ def register():
             "tenant_id": tenant_id,
             "user_id":   user_id,
             "papel":     "dono",
-            "username":  login if is_username(login) else None,
         }).execute()
     except Exception as e:
         return error(f"Erro ao vincular usuário: {str(e)}", 500)
@@ -156,7 +155,7 @@ def login():
         # ── Login normal ────────────────────────────────────
         sb = get_supabase_admin()
         tenant_resp = sb.table("tenant_users") \
-            .select("tenant_id, papel, username, tenants(*)") \
+            .select("tenant_id, papel, tenants(*)") \
             .eq("user_id", resp.user.id) \
             .eq("ativo", True) \
             .limit(1) \
@@ -166,7 +165,7 @@ def login():
         if not tenant_data:
             return error("Usuário sem empresa vinculada. Contate o administrador.", 403)
 
-        display_login = tenant_data.get("username") or login
+        display_login = login
 
         return success({
             "access_token":  resp.session.access_token,
@@ -447,7 +446,6 @@ def register_tenant(current_user=None):
             "tenant_id": tenant_id,
             "user_id": user_id,
             "papel": "dono",
-            "username": None,
             "ativo": True,
         }).execute()
     except Exception as e:
@@ -654,4 +652,3 @@ def delete_admin(admin_id):
         return success(message="Administrador deletado com sucesso")
     except Exception as e:
         return error(f"Erro ao deletar administrador: {str(e)}", 500)
-
