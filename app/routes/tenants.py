@@ -34,7 +34,10 @@ def get_my_tenant():
         .select("*").eq("id", request.tenant_id).maybe_single().execute()
     if not resp.data:
         return error("Empresa não encontrada", 404)
-    return success(resp.data)
+    # Injeta papel do usuário na resposta para que o frontend possa usar
+    tenant_data = dict(resp.data)
+    tenant_data["papel"] = getattr(request, "papel", None)
+    return success(tenant_data)
 
 
 @tenants_bp.put("/me")

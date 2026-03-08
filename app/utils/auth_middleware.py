@@ -46,13 +46,16 @@ def require_auth(f):
             return jsonify({"error": "Token inválido ou expirado"}), 401
 
         # Se a função decorada aceitar um argumento posicional (ex: current_user),
-        # injeta o objeto `current_user`. Caso contrário, comporta-se como antes.
-        try:
-            params = inspect.signature(f).parameters
-            if len(params) >= 1:
+        # injeta o objeto `current_user`. Caso contrário, chama sem argumentos extras.
+        params = inspect.signature(f).parameters
+        if params:
+            first_param = next(iter(params.values()))
+            # Injeta apenas se o primeiro parâmetro é posicional normal (não *args/**kwargs)
+            if first_param.kind in (
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                inspect.Parameter.POSITIONAL_ONLY,
+            ):
                 return f(current_user, *args, **kwargs)
-        except Exception:
-            pass
 
         return f(*args, **kwargs)
     return decorated

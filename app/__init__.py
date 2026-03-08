@@ -13,9 +13,16 @@ def create_app():
         "https://redcomercialweb.vercel.app",
         "http://localhost:5173",
         "http://localhost:3000",
+        "http://localhost:4173",   # vite preview
     ]
     # Permite CORS globalmente para os origins permitidos
-    CORS(app, origins=allowed_origins)
+    CORS(
+        app,
+        origins=allowed_origins,
+        methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+        allow_headers=["Content-Type", "Authorization"],
+        supports_credentials=False,
+    )
     
     # Ativa middleware de logging automático
     log_request_middleware(app)
