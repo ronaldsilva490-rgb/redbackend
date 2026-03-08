@@ -4,8 +4,8 @@ Suporte a login por USERNAME (sem @email) ou EMAIL.
 Usernames são armazenados como username@red.internal no Supabase Auth.
 """
 from flask import Blueprint, request
-from ..utils.supabase_client import get_supabase, get_supabase_admin
-from ..utils.auth_middleware import require_auth
+from ..utils.supabase_client import get_supabase_admin, get_supabase
+from ..utils.auth_middleware import require_auth, require_auth_token_only
 from app.config.business_types import validate_business_type, get_all_business_types
 from ..utils.response import success, error
 import re
@@ -401,7 +401,7 @@ def admin_login():
 
 
 @auth_bp.post("/register-tenant")
-@require_auth
+@require_auth_token_only
 def register_tenant(current_user=None):
     """Cria um tenant vinculado ao usuário autenticado (frontend já criou o usuário via Supabase)."""
     body = request.get_json() or {}

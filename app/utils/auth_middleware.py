@@ -4,8 +4,56 @@ from .supabase_client import get_supabase_admin
 import inspect
 
 
+def _inject_and_call(f, current_user, *args, **kwargs):
+    """Injeta current_user como primeiro arg se a função o declarar explicitamente."""
+    params = inspect.signature(f).parameters
+    if params:
+        first_param = next(iter(params.values()))
+        if first_param.kind in (
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            inspect.Parameter.POSITIONAL_ONLY,
+        ):
+            return f(current_user, *args, **kwargs)
+    return f(*args, **kwargs)
+
+
+def require_auth_token_only(f):
+    """
+    Valida JWT via Supabase e injeta request.user_id / request.user.
+    NÃO exige que o usuário já tenha um tenant vinculado.
+    Use em rotas que criam o primeiro tenant (register-tenant).
+    """
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        auth_header = request.headers.get("Authorization", "")
+        token = auth_header.replace("Bearer ", "").strip()
+
+        if not token:
+            return jsonify({"error": "Token não fornecido"}), 401
+
+        try:
+            sb = get_supabase_admin()
+            user_resp = sb.auth.get_user(token)
+            if not user_resp or not user_resp.user:
+                return jsonify({"error": "Token inválido"}), 401
+
+            user_id = user_resp.user.id
+            current_user = {"id": user_id, "email": user_resp.user.email}
+            request.user     = {"sub": user_id, "email": user_resp.user.email}
+            request.user_id  = user_id
+            request.tenant_id = None
+            request.papel     = None
+
+        except Exception:
+            return jsonify({"error": "Token inválido ou expirado"}), 401
+
+        return _inject_and_call(f, current_user, *args, **kwargs)
+    return decorated
+
+
 def require_auth(f):
-    """Valida JWT via Supabase e injeta request.user + request.tenant_id."""
+    """Valida JWT via Supabase e injeta request.user + request.tenant_id.
+    Exige que o usuário já tenha um tenant ativo vinculado."""
     @wraps(f)
     def decorated(*args, **kwargs):
         auth_header = request.headers.get("Authorization", "")
@@ -35,7 +83,6 @@ def require_auth(f):
             tenant_id = tenant_resp.data[0]["tenant_id"]
             papel     = tenant_resp.data[0]["papel"]
 
-            # Monta objeto do usuário para injeção opcional em handlers
             current_user = {"id": user_id, "email": user_resp.user.email}
             request.user      = {"sub": user_id, "email": user_resp.user.email}
             request.user_id   = user_id
@@ -45,19 +92,7 @@ def require_auth(f):
         except Exception:
             return jsonify({"error": "Token inválido ou expirado"}), 401
 
-        # Se a função decorada aceitar um argumento posicional (ex: current_user),
-        # injeta o objeto `current_user`. Caso contrário, chama sem argumentos extras.
-        params = inspect.signature(f).parameters
-        if params:
-            first_param = next(iter(params.values()))
-            # Injeta apenas se o primeiro parâmetro é posicional normal (não *args/**kwargs)
-            if first_param.kind in (
-                inspect.Parameter.POSITIONAL_OR_KEYWORD,
-                inspect.Parameter.POSITIONAL_ONLY,
-            ):
-                return f(current_user, *args, **kwargs)
-
-        return f(*args, **kwargs)
+        return _inject_and_call(f, current_user, *args, **kwargs)
     return decorated
 
 
