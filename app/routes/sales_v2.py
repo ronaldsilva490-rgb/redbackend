@@ -114,7 +114,7 @@ def criar_venda():
             sb.table("pagamentos_venda").insert([{
                 "venda_id": venda_id,
                 "tenant_id": tenant_id,
-                "tipo": pag['tipo'],
+                "forma": pag['tipo'],
                 "valor": pag['valor'],
                 "referencia": pag.get('referencia'),
                 "criado_em": datetime.utcnow().isoformat()
@@ -124,8 +124,8 @@ def criar_venda():
         for item in itens:
             try:
                 sb.table("produtos").update({
-                    "estoque": sb.table("produtos").select("estoque_atual")
-                        .eq("id", item['produto_id']).execute().data[0]['estoque'] - item['quantidade']
+                    "estoque_atual": sb.table("produtos").select("estoque_atual")
+                        .eq("id", item['produto_id']).execute().data[0]['estoque_atual'] - item['quantidade']
                 }).eq("id", item['produto_id']).execute()
             except:
                 pass  # Alguns produtos podem não ter estoque
@@ -296,7 +296,7 @@ def cancelar_venda(venda_id):
                     .execute().data[0]
                 
                 sb.table("produtos").update({
-                    "estoque": prod['estoque'] + item['quantidade']
+                    "estoque_atual": prod['estoque_atual'] + item['quantidade']
                 }).eq("id", item['produto_id']).execute()
             except:
                 pass
