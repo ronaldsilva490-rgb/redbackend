@@ -165,8 +165,20 @@ def update_user(user_id):
         return error("Nenhum campo para atualizar")
 
     sb   = get_supabase_admin()
-    resp = sb.table("tenant_users").update(update) \
-        .eq("user_id", user_id).eq("tenant_id", request.tenant_id).execute()
+    try:
+        resp = sb.table("tenant_users").update(update) \
+            .eq("user_id", user_id).eq("tenant_id", request.tenant_id).execute()
+    except Exception as e:
+        msg = str(e)
+        # Coluna 'ativo' pode não existir ainda — tenta sem ela
+        if "ativo" in msg and "ativo" in update:
+            update.pop("ativo")
+            if not update:
+                return error("Campo 'ativo' não disponível no banco. Execute a migration SQL.", 503)
+            resp = sb.table("tenant_users").update(update) \
+                .eq("user_id", user_id).eq("tenant_id", request.tenant_id).execute()
+        else:
+            return error(f"Erro ao atualizar funcionário: {msg}", 500)
     if not resp.data:
         return error("Funcionário não encontrado", 404)
     return success(resp.data[0], "Funcionário atualizado")
