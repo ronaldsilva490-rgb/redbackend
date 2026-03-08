@@ -220,7 +220,6 @@ def confirmar_item_garcom(order_id, item_id):
 
     sb.table("order_items").update({
         "status_item": "pronto",
-        "confirmado_garcom": True
     }).eq("id", item_id).execute()
 
     return success(message=f"Item '{item.data['nome']}' confirmado como entregue.")
