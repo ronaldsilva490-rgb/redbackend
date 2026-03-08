@@ -40,6 +40,28 @@ def get_my_tenant():
     return success(tenant_data)
 
 
+@tenants_bp.get("/my-units")
+@require_auth
+@require_papel("dono", "gerente")
+def list_my_units():
+    """Lista todos os estabelecimentos vinculados ao dono/gerente logado, para RBAC cruzado."""
+    sb = get_supabase_admin()
+    resp = sb.table("tenant_users") \
+        .select("papel, tenants(id, nome, slug, tipo)") \
+        .eq("user_id", request.user_id) \
+        .execute()
+    
+    if not resp.data:
+        return success([])
+        
+    units = []
+    for item in resp.data:
+        if item.get("tenants") and item.get("papel") in ("dono", "gerente"):
+            units.append(item["tenants"])
+            
+    return success(units)
+
+
 @tenants_bp.put("/me")
 @require_auth
 @require_papel("dono", "gerente")
@@ -131,11 +153,13 @@ def check_username_tenant():
     """Verifica disponibilidade de username para novo funcionário."""
     body     = request.get_json() or {}
     username = body.get("username", "").strip().lower()
-    err = validate_username(username)
+    
+    base_username = username.split("@")[0] if username.endswith(INTERNAL_DOMAIN) else username
+    err = validate_username(base_username)
     if err:
         return error(err)
 
-    auth_email = to_auth_email(username)
+    auth_email = username if "@" in username else to_auth_email(username)
     sb = get_supabase_admin()
     try:
         users = sb.auth.admin.list_users()
@@ -216,13 +240,16 @@ def invite_user():
     if papel not in PAPEIS_VALIDOS:
         return error(f"Papel inválido. Use: {', '.join(PAPEIS_VALIDOS)}")
 
-    is_username = "@" not in login
+    is_internal = login.endswith(INTERNAL_DOMAIN)
+    is_username = "@" not in login or is_internal
+    
     if is_username:
-        err = validate_username(login)
+        base_login = login.split("@")[0] if is_internal else login
+        err = validate_username(base_login)
         if err:
             return error(err)
 
-    auth_email = to_auth_email(login)
+    auth_email = login if is_internal else to_auth_email(login)
     sb = get_supabase_admin()
 
     try:
@@ -244,27 +271,40 @@ def invite_user():
         # Rollback: usuário criado no Auth mas já vinculado → remove do Auth
         try: sb.auth.admin.delete_user(user_id)
         except: pass
-        return error("Este login já é funcionário desta empresa", 409)
+        return error("Este login já é funcionário desta empresa principal", 409)
+
+    raw_units = body.get("units", [])
+    units = list(raw_units) if isinstance(raw_units, list) and len(raw_units) > 0 else [request.tenant_id]
+        
+    # Garante que request.tenant_id sempre está no bolo se veio vazio
+    if request.tenant_id not in units:
+        units.append(request.tenant_id)
 
     try:
-        row = {
-            "tenant_id": request.tenant_id,
-            "user_id":   user_id,
-            "papel":     papel,
-            "ativo":     True,
-        }
-        # username só insere se a coluna existir no schema
+        rows = []
+        for t_id in units:
+            row = {
+                "tenant_id": t_id,
+                "user_id":   user_id,
+                "papel":     papel,
+                "ativo":     True,
+            }
+            if is_username:
+                row["username"] = base_login
+            rows.append(row)
+
         try:
-            sb.table("tenant_users").insert({**row, "username": login if is_username else None}).execute()
+            sb.table("tenant_users").insert(rows).execute()
         except Exception as e:
             if "username" in str(e) and "schema cache" in str(e):
-                sb.table("tenant_users").insert(row).execute()
+                clean_rows = [{k: v for k, v in r.items() if k != "username"} for r in rows]
+                sb.table("tenant_users").insert(clean_rows).execute()
             else:
                 raise
     except Exception as e:
         try: sb.auth.admin.delete_user(user_id)
         except: pass
-        return error(f"Erro ao vincular funcionário: {str(e)}", 500)
+        return error(f"Erro ao vincular funcionário em múltiplas unidades: {str(e)}", 500)
 
     return success({
         "user_id": user_id,
