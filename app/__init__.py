@@ -60,7 +60,9 @@ def create_app():
     app.register_blueprint(preferences_bp, url_prefix="/api/preferences")
     app.register_blueprint(superadmin_bp,  url_prefix="/api/superadmin")
     app.register_blueprint(caixa_bp,       url_prefix="/api/caixa")
-    app.register_blueprint(logs_bp,        url_prefix="/api/superadmin/logs")
+    # Registra o blueprint de logs sob o mesmo prefixo /api/superadmin
+    # (as rotas internas em app/routes/logs.py usam '/logs', '/logs/batch', etc.)
+    app.register_blueprint(logs_bp,        url_prefix="/api/superadmin")
     app.register_blueprint(settings_bp,    url_prefix="/api/superadmin/settings")
     app.register_blueprint(business_bp,    url_prefix="/api/business")
 
