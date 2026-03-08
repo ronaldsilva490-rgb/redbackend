@@ -99,7 +99,7 @@ def create_product():
 
     if not body.get("nome"):
         return error("Nome é obrigatório")
-    if body.get("preco_venda") is None:
+    if body.get("preco") is None:
         return error("Preço de venda é obrigatório")
 
     body["tenant_id"] = request.tenant_id
