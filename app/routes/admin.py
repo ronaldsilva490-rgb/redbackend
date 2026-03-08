@@ -1,0 +1,394 @@
+"""
+admin.py — Painel administrativo centralizado.
+Consolida: autenticação de admin, tenants, status do sistema e logs.
+Todas as rotas exigem admin_token (JWT próprio, independente do Supabase).
+"""
+import os, time, jwt, bcrypt, requests
+from datetime import datetime, timezone, timedelta
+from functools import wraps
+from flask import Blueprint, request, jsonify
+from ..utils.supabase_client import get_supabase_admin
+from ..utils.response import success, error
+
+admin_bp = Blueprint("admin", __name__)
+
+# ── Env vars ──────────────────────────────────────────────
+JWT_SECRET      = os.getenv("JWT_SECRET", "red-admin-secret-change-in-prod")
+JWT_EXPIRY_DAYS = int(os.getenv("JWT_EXPIRY_DAYS", 7))
+PALAVRA_MESTRE  = os.getenv("ADMIN_PALAVRA_MESTRE", "redmaster2024")
+
+# Infraestrutura monitorada
+FLY_URL              = os.getenv("FLY_URL", "https://redbackend.fly.dev")
+FLY_API_TOKEN        = os.getenv("FLY_API_TOKEN", "")
+FLY_APP_NAME         = os.getenv("FLY_APP_NAME", "redbackend")
+GITHUB_TOKEN         = os.getenv("GITHUB_TOKEN", "")
+GITHUB_REPO          = os.getenv("GITHUB_REPO", "")
+GITHUB_BACKEND_REPO  = os.getenv("GITHUB_BACKEND_REPO", "")
+VERCEL_TOKEN         = os.getenv("VERCEL_TOKEN", "")
+VERCEL_PROJECT_ID    = os.getenv("VERCEL_PROJECT_ID", "")
+
+
+# ── JWT helpers ───────────────────────────────────────────
+def generate_admin_token(admin_id: str) -> str:
+    payload = {
+        "admin_id": admin_id,
+        "exp": datetime.now(timezone.utc) + timedelta(days=JWT_EXPIRY_DAYS),
+        "iat": datetime.now(timezone.utc),
+    }
+    return jwt.encode(payload, JWT_SECRET, algorithm="HS256")
+
+
+def verify_admin_token(token: str) -> dict | None:
+    try:
+        return jwt.decode(token, JWT_SECRET, algorithms=["HS256"])
+    except Exception:
+        return None
+
+
+# ── Auth guard ────────────────────────────────────────────
+def require_admin(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        auth = request.headers.get("Authorization", "")
+        token = auth.replace("Bearer ", "").strip()
+        if not token:
+            return jsonify({"error": "Token não fornecido"}), 401
+        payload = verify_admin_token(token)
+        if not payload:
+            return jsonify({"error": "Token inválido ou expirado"}), 401
+        request.admin_id = payload.get("admin_id")
+        return f(*args, **kwargs)
+    return decorated
+
+
+# ═══════════════════════════════════════════════════════════
+# AUTH
+# ═══════════════════════════════════════════════════════════
+
+@admin_bp.post("/register")
+def admin_register():
+    """Cria novo admin. Requer palavra-mestre."""
+    body          = request.get_json() or {}
+    nome          = (body.get("nome") or "").strip()
+    username      = (body.get("username") or "").strip().lower()
+    email         = (body.get("email") or "").strip().lower()
+    senha         = body.get("senha") or ""
+    palavra_mestre = body.get("palavra_mestre") or ""
+
+    if not all([nome, username, email, senha, palavra_mestre]):
+        return error("Todos os campos são obrigatórios")
+
+    if palavra_mestre != PALAVRA_MESTRE:
+        return error("Palavra-mestre incorreta", 403)
+
+    if len(username) < 3:
+        return error("Username deve ter pelo menos 3 caracteres")
+
+    if len(senha) < 6:
+        return error("Senha deve ter pelo menos 6 caracteres")
+
+    sb = get_supabase_admin()
+    try:
+        existing = sb.table("admin_users") \
+            .select("id") \
+            .or_(f"username.eq.{username},email.eq.{email}") \
+            .execute()
+        if existing.data:
+            return error("Username ou e-mail já cadastrado")
+
+        hashed = bcrypt.hashpw(senha.encode(), bcrypt.gensalt()).decode()
+        resp   = sb.table("admin_users").insert({
+            "nome":     nome,
+            "username": username,
+            "email":    email,
+            "senha":    hashed,
+            "ativo":    True,
+        }).execute()
+
+        admin = resp.data[0]
+        return success({"admin": {"id": admin["id"], "nome": nome, "username": username}},
+                       "Administrador criado com sucesso", 201)
+    except Exception as e:
+        msg = str(e)
+        if "admin_users" in msg and "does not exist" in msg:
+            return error("Tabela admin_users não encontrada. Execute o schema SQL no Supabase.", 503)
+        return error(f"Erro ao criar administrador: {msg}", 500)
+
+
+@admin_bp.post("/login")
+def admin_login():
+    """Login de admin com username ou e-mail."""
+    body  = request.get_json() or {}
+    login = (body.get("login") or "").strip()
+    senha = body.get("senha") or ""
+
+    if not login or not senha:
+        return error("Login e senha são obrigatórios")
+
+    sb = get_supabase_admin()
+    try:
+        query = sb.table("admin_users").select("*")
+        if "@" in login:
+            query = query.eq("email", login.lower())
+        else:
+            query = query.eq("username", login.lower())
+
+        resp  = query.eq("ativo", True).limit(1).execute()
+        if not resp.data:
+            return error("Credenciais inválidas", 401)
+
+        admin = resp.data[0]
+        if not bcrypt.checkpw(senha.encode(), admin["senha"].encode()):
+            return error("Credenciais inválidas", 401)
+
+        token = generate_admin_token(admin["id"])
+        return success({
+            "access_token": token,
+            "admin": {
+                "id":       admin["id"],
+                "nome":     admin["nome"],
+                "username": admin["username"],
+                "email":    admin["email"],
+            }
+        })
+    except Exception as e:
+        msg = str(e)
+        if "admin_users" in msg and "does not exist" in msg:
+            return error("Tabela admin_users não encontrada. Execute o schema SQL no Supabase.", 503)
+        return error(f"Erro ao fazer login: {msg}", 500)
+
+
+@admin_bp.get("/verifica-token")
+def admin_verifica_token():
+    """Verifica validade do token de admin."""
+    auth  = request.headers.get("Authorization", "")
+    token = auth.replace("Bearer ", "").strip()
+    if not token:
+        return error("Token não fornecido", 401)
+
+    payload = verify_admin_token(token)
+    if not payload:
+        return error("Token inválido ou expirado", 401)
+
+    sb = get_supabase_admin()
+    try:
+        resp = sb.table("admin_users") \
+            .select("id, nome, username, email, ativo") \
+            .eq("id", payload["admin_id"]) \
+            .execute()
+        if not resp.data or not resp.data[0]["ativo"]:
+            return error("Admin não encontrado ou desativado", 401)
+        return success({"admin": resp.data[0], "token_valido": True})
+    except Exception:
+        return error("Erro ao verificar token", 500)
+
+
+@admin_bp.get("/list")
+@require_admin
+def list_admins():
+    """Lista todos os administradores."""
+    sb = get_supabase_admin()
+    try:
+        resp = sb.table("admin_users") \
+            .select("id, nome, username, email, ativo, criado_em") \
+            .order("criado_em", desc=True) \
+            .execute()
+        return success({"admins": resp.data or []})
+    except Exception as e:
+        msg = str(e)
+        if "admin_users" in msg and "does not exist" in msg:
+            return error("Tabela admin_users não encontrada. Execute o schema SQL.", 503)
+        return error(f"Erro ao listar admins: {msg}", 500)
+
+
+@admin_bp.post("/deactivate/<admin_id>")
+@require_admin
+def deactivate_admin(admin_id):
+    sb = get_supabase_admin()
+    sb.table("admin_users").update({"ativo": False}).eq("id", admin_id).execute()
+    return success(message="Admin desativado")
+
+
+@admin_bp.post("/activate/<admin_id>")
+@require_admin
+def activate_admin(admin_id):
+    sb = get_supabase_admin()
+    sb.table("admin_users").update({"ativo": True}).eq("id", admin_id).execute()
+    return success(message="Admin ativado")
+
+
+@admin_bp.delete("/<admin_id>")
+@require_admin
+def delete_admin(admin_id):
+    if admin_id == request.admin_id:
+        return error("Você não pode deletar sua própria conta")
+    sb = get_supabase_admin()
+    sb.table("admin_users").delete().eq("id", admin_id).execute()
+    return success(message="Admin removido")
+
+
+# ═══════════════════════════════════════════════════════════
+# TENANTS
+# ═══════════════════════════════════════════════════════════
+
+@admin_bp.get("/tenants")
+@require_admin
+def list_tenants():
+    """Lista todos os tenants (empresas) com contagem de usuários."""
+    sb   = get_supabase_admin()
+    resp = sb.table("tenants").select("*, tenant_users(count)").execute()
+    data = resp.data or []
+    for t in data:
+        count = t.get("tenant_users", [])
+        t["user_count"] = count[0]["count"] if count else 0
+        t.pop("tenant_users", None)
+    return success(data)
+
+
+@admin_bp.patch("/tenants/<tenant_id>")
+@require_admin
+def update_tenant(tenant_id):
+    body = request.get_json() or {}
+    sb   = get_supabase_admin()
+    sb.table("tenants").update(body).eq("id", tenant_id).execute()
+    return success(message="Tenant atualizado")
+
+
+# ═══════════════════════════════════════════════════════════
+# SYSTEM STATUS
+# ═══════════════════════════════════════════════════════════
+
+@admin_bp.get("/status")
+@require_admin
+def system_status():
+    """Health check de todos os serviços da infraestrutura."""
+    results = {}
+
+    # Backend (Fly.io)
+    try:
+        t0 = time.perf_counter()
+        r  = requests.get(FLY_URL, timeout=8)
+        results["backend"] = {
+            "ok": r.status_code == 200,
+            "label": "Backend Fly.io",
+            "latency_ms": round((time.perf_counter() - t0) * 1000),
+        }
+    except Exception as e:
+        results["backend"] = {"ok": False, "label": "Backend Fly.io", "error": str(e)[:80]}
+
+    # Supabase DB
+    try:
+        t0 = time.perf_counter()
+        sb = get_supabase_admin()
+        sb.table("tenants").select("id").limit(1).execute()
+        results["supabase"] = {
+            "ok": True,
+            "label": "Supabase DB",
+            "latency_ms": round((time.perf_counter() - t0) * 1000),
+        }
+    except Exception as e:
+        results["supabase"] = {"ok": False, "label": "Supabase DB", "error": str(e)[:120]}
+
+    # Vercel Frontend
+    try:
+        t0 = time.perf_counter()
+        r  = requests.head("https://redcomercialweb.vercel.app", timeout=8, allow_redirects=True)
+        results["vercel"] = {
+            "ok": r.status_code < 400,
+            "label": "Vercel Frontend",
+            "latency_ms": round((time.perf_counter() - t0) * 1000),
+        }
+    except Exception as e:
+        results["vercel"] = {"ok": False, "label": "Vercel Frontend", "error": str(e)[:80]}
+
+    # GitHub Frontend
+    try:
+        t0 = time.perf_counter()
+        if GITHUB_TOKEN and GITHUB_REPO:
+            r = requests.head(
+                f"https://api.github.com/repos/{GITHUB_REPO}",
+                headers={"Authorization": f"Bearer {GITHUB_TOKEN}"},
+                timeout=8,
+            )
+            results["github"] = {
+                "ok": r.status_code in [200, 405],
+                "label": "GitHub Frontend",
+                "latency_ms": round((time.perf_counter() - t0) * 1000),
+            }
+        else:
+            results["github"] = {"ok": None, "label": "GitHub Frontend", "error": "GITHUB_REPO não configurado"}
+    except Exception as e:
+        results["github"] = {"ok": False, "label": "GitHub Frontend", "error": str(e)[:80]}
+
+    # GitHub Backend
+    try:
+        t0   = time.perf_counter()
+        repo = GITHUB_BACKEND_REPO or GITHUB_REPO
+        if GITHUB_TOKEN and repo:
+            r = requests.head(
+                f"https://api.github.com/repos/{repo}",
+                headers={"Authorization": f"Bearer {GITHUB_TOKEN}"},
+                timeout=8,
+            )
+            results["github_backend"] = {
+                "ok": r.status_code in [200, 405],
+                "label": "GitHub Backend",
+                "latency_ms": round((time.perf_counter() - t0) * 1000),
+            }
+        else:
+            results["github_backend"] = {"ok": None, "label": "GitHub Backend", "error": "GITHUB_BACKEND_REPO não configurado"}
+    except Exception as e:
+        results["github_backend"] = {"ok": False, "label": "GitHub Backend", "error": str(e)[:80]}
+
+    return success(results)
+
+
+# ═══════════════════════════════════════════════════════════
+# LOGS
+# ═══════════════════════════════════════════════════════════
+
+@admin_bp.get("/logs")
+@require_admin
+def get_logs():
+    """Lista logs do sistema com filtros."""
+    nivel   = request.args.get("nivel")
+    servico = request.args.get("servico")
+    busca   = request.args.get("busca", "").strip()
+    limit   = min(int(request.args.get("limit", 100)), 500)
+    offset  = int(request.args.get("offset", 0))
+
+    sb = get_supabase_admin()
+    try:
+        q = sb.table("system_logs").select("*").order("created_at", desc=True)
+        if nivel:
+            q = q.eq("level", nivel)
+        if servico:
+            q = q.eq("service", servico)
+        if busca:
+            q = q.ilike("message", f"%{busca}%")
+
+        resp = q.limit(limit).offset(offset).execute()
+        logs = resp.data or []
+
+        total_resp = sb.table("system_logs").select("id", count="exact").execute()
+        total = total_resp.count if hasattr(total_resp, "count") else len(logs)
+
+        return success({"data": logs, "total": total, "limit": limit, "offset": offset})
+    except Exception as e:
+        msg = str(e)
+        if "system_logs" in msg and "does not exist" in msg:
+            return success({"data": [], "total": 0, "warning": "Tabela system_logs não encontrada"})
+        return error(f"Erro ao carregar logs: {msg[:120]}", 500)
+
+
+@admin_bp.delete("/logs")
+@require_admin
+def clear_logs():
+    """Remove logs antigos (mais de 30 dias)."""
+    sb = get_supabase_admin()
+    try:
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+        sb.table("system_logs").delete().lt("created_at", cutoff).execute()
+        return success(message="Logs antigos removidos")
+    except Exception as e:
+        return error(f"Erro ao limpar logs: {str(e)}", 500)

@@ -28,6 +28,7 @@ def create_app():
     log_request_middleware(app)
 
     from .routes.auth          import auth_bp
+    from .routes.admin         import admin_bp
     from .routes.tenants       import tenants_bp
     from .routes.vehicles      import vehicles_bp
     from .routes.clients       import clients_bp
@@ -43,13 +44,11 @@ def create_app():
     from .routes.stock         import stock_bp
     from .routes.inventory     import inventory_bp
     from .routes.preferences   import preferences_bp
-    from .routes.superadmin    import superadmin_bp
     from .routes.caixa         import caixa_bp
-    from .routes.logs          import logs_bp
-    from .routes.settings      import settings_bp
     from .routes.business      import business_bp
 
     app.register_blueprint(auth_bp,        url_prefix="/api/auth")
+    app.register_blueprint(admin_bp,       url_prefix="/api/admin")
     app.register_blueprint(tenants_bp,     url_prefix="/api/tenants")
     app.register_blueprint(vehicles_bp,    url_prefix="/api/vehicles")
     app.register_blueprint(clients_bp,     url_prefix="/api/clients")
@@ -65,12 +64,7 @@ def create_app():
     app.register_blueprint(stock_bp,       url_prefix="/api/stock")
     app.register_blueprint(inventory_bp,   url_prefix="/api/inventory")
     app.register_blueprint(preferences_bp, url_prefix="/api/preferences")
-    app.register_blueprint(superadmin_bp,  url_prefix="/api/superadmin")
     app.register_blueprint(caixa_bp,       url_prefix="/api/caixa")
-    # Registra o blueprint de logs sob o mesmo prefixo /api/superadmin
-    # (as rotas internas em app/routes/logs.py usam '/logs', '/logs/batch', etc.)
-    app.register_blueprint(logs_bp,        url_prefix="/api/superadmin")
-    app.register_blueprint(settings_bp,    url_prefix="/api/superadmin/settings")
     app.register_blueprint(business_bp,    url_prefix="/api/business")
 
     @app.get("/")

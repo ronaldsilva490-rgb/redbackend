@@ -65,9 +65,9 @@ def log_request_middleware(app):
             path = request.path
             
             # ⚠️ SUPER IMPORTANTE: Pular logging de rotas de logs para evitar recursão infinita!
-            # Se log for registrado aqui, vai criar uma requisição POST para /api/superadmin/logs
-            # que vai criar outro log, etc. Então BLOQUEAMOS tudo que é /api/superadmin/logs
-            if path.startswith('/api/superadmin/logs'):
+            # Se log for registrado aqui, vai criar uma requisição POST para /api/admin/logs
+            # que vai criar outro log, etc. Então BLOQUEAMOS tudo que é /api/admin/logs
+            if path.startswith('/api/admin/logs'):
                 return response
             
             # Pula assets estáticos
