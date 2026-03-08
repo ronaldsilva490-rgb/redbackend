@@ -124,7 +124,7 @@ def criar_venda():
         for item in itens:
             try:
                 sb.table("produtos").update({
-                    "estoque": sb.table("produtos").select("estoque")
+                    "estoque": sb.table("produtos").select("estoque_atual")
                         .eq("id", item['produto_id']).execute().data[0]['estoque'] - item['quantidade']
                 }).eq("id", item['produto_id']).execute()
             except:
@@ -291,7 +291,7 @@ def cancelar_venda(venda_id):
         for item in itens:
             try:
                 prod = sb.table("produtos") \
-                    .select("estoque") \
+                    .select("estoque_atual") \
                     .eq("id", item['produto_id']) \
                     .execute().data[0]
                 
