@@ -5,6 +5,7 @@ Usernames são armazenados como username@red.internal no Supabase Auth.
 """
 from flask import Blueprint, request
 from ..utils.supabase_client import get_supabase, get_supabase_admin
+from app.config.business_types import validate_business_type, get_all_business_types
 from ..utils.response import success, error
 import re
 
@@ -58,8 +59,10 @@ def register():
         return error("Login e senha são obrigatórios")
     if not tenant.get("nome"):
         return error("Nome do negócio é obrigatório")
-    if tenant.get("tipo") not in ("concessionaria", "restaurante", "comercio"):
-        return error("Tipo inválido. Use: concessionaria, restaurante, comercio")
+    tipo = (tenant.get("tipo") or "").strip()
+    if not validate_business_type(tipo):
+        allowed = ", ".join(get_all_business_types())
+        return error(f"Tipo inválido. Use: {allowed}")
 
     auth_email = to_auth_email(login)
     sb = get_supabase_admin()
