@@ -23,8 +23,13 @@ def slugify(text):
 
 
 def is_username(login: str) -> bool:
-    """Retorna True se login é username (sem @), False se é email."""
-    return "@" not in login
+    """Retorna True se login é username (ex: antonio ou antonio@padaria)."""
+    if "@" not in login:
+        return True
+    domain_part = login.split("@")[-1]
+    if "." not in domain_part:
+        return True
+    return False
 
 
 def to_auth_email(login: str) -> str:
