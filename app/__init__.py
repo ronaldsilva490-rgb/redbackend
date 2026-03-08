@@ -1,5 +1,5 @@
 from flask import Flask
-from flask_cors import CORS
+from flask_cors import CORS, cross_origin
 from .config import Config
 from .utils.logger import log_request_middleware
 
@@ -14,7 +14,8 @@ def create_app():
         "http://localhost:5173",
         "http://localhost:3000",
     ]
-    CORS(app, resources={r"/api/*": {"origins": allowed_origins}})
+    # Permite CORS globalmente para os origins permitidos
+    CORS(app, origins=allowed_origins)
     
     # Ativa middleware de logging automático
     log_request_middleware(app)
@@ -64,6 +65,7 @@ def create_app():
     app.register_blueprint(business_bp,    url_prefix="/api/business")
 
     @app.get("/")
+    @cross_origin()
     def health():
         return {"status": "RED API online", "version": "5.0.0"}
 

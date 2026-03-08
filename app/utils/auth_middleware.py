@@ -1,6 +1,7 @@
 from functools import wraps
 from flask import request, jsonify
 from .supabase_client import get_supabase_admin
+import inspect
 
 
 def require_auth(f):
@@ -34,6 +35,8 @@ def require_auth(f):
             tenant_id = tenant_resp.data[0]["tenant_id"]
             papel     = tenant_resp.data[0]["papel"]
 
+            # Monta objeto do usuário para injeção opcional em handlers
+            current_user = {"id": user_id, "email": user_resp.user.email}
             request.user      = {"sub": user_id, "email": user_resp.user.email}
             request.user_id   = user_id
             request.tenant_id = tenant_id
@@ -41,6 +44,15 @@ def require_auth(f):
 
         except Exception:
             return jsonify({"error": "Token inválido ou expirado"}), 401
+
+        # Se a função decorada aceitar um argumento posicional (ex: current_user),
+        # injeta o objeto `current_user`. Caso contrário, comporta-se como antes.
+        try:
+            params = inspect.signature(f).parameters
+            if len(params) >= 1:
+                return f(current_user, *args, **kwargs)
+        except Exception:
+            pass
 
         return f(*args, **kwargs)
     return decorated
