@@ -16,18 +16,16 @@ def _to_frontend(p):
     # estoque → estoque_atual
     # estoque_atual is the real column name — no remapping needed
     # imagens[] → foto_url (primeira imagem)
-    if "imagens" in p and "foto_url" not in p:
-        imgs = p.get("imagens") or []
-        p["foto_url"] = imgs[0] if imgs else None
+    # foto_url já é o nome real — sem remapeamento
     return p
 
 def _clean(body):
     """Normaliza campos do frontend para nomes/tipos corretos do banco."""
     # Mapeia nomes frontend → banco
     # estoque_atual é o nome real da coluna no banco (não renomeia)
-    if "foto_url" in body:
-        url = body.pop("foto_url")
-        body["imagens"] = [url] if url else []
+    # foto_url é o nome real da coluna no banco (TEXT, não array)
+    if body.get("foto_url") == "":
+        body["foto_url"] = None
     # categoria texto livre → salva em 'descricao' extra ou ignora categoria_id
     body.pop("categoria_id", None)   # nunca vem do frontend simples
     body.pop("destino", None)        # coluna não existe no schema
