@@ -175,7 +175,6 @@ def add_item(order_id):
         "product_id":  body.get("product_id") or None,
         "destino":     destino,
         "status_item": "pendente",
-        "confirmado_garcom": False,  # para itens de bar/proprio que garçom precisa buscar
     }
     item_resp = sb.table("order_items").insert(item_data).execute()
 
@@ -220,7 +219,6 @@ def confirmar_item_garcom(order_id, item_id):
 
     sb.table("order_items").update({
         "status_item": "pronto",
-        "confirmado_garcom": True
     }).eq("id", item_id).execute()
 
     return success(message=f"Item '{item.data['nome']}' confirmado como entregue.")
