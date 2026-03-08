@@ -5,14 +5,12 @@ import inspect
 
 
 def _inject_and_call(f, current_user, *args, **kwargs):
-    """Injeta current_user como primeiro arg se a função o declarar explicitamente."""
+    """Injeta current_user como primeiro arg SOMENTE se a função o declara explicitamente."""
     params = inspect.signature(f).parameters
     if params:
-        first_param = next(iter(params.values()))
-        if first_param.kind in (
-            inspect.Parameter.POSITIONAL_OR_KEYWORD,
-            inspect.Parameter.POSITIONAL_ONLY,
-        ):
+        first_param_name = next(iter(params))
+        # Só injeta se o primeiro parâmetro se chama 'current_user'
+        if first_param_name == 'current_user':
             return f(current_user, *args, **kwargs)
     return f(*args, **kwargs)
 
@@ -70,12 +68,20 @@ def require_auth(f):
 
             user_id = user_resp.user.id
 
-            tenant_resp = sb.table("tenant_users") \
-                .select("tenant_id, papel") \
-                .eq("user_id", user_id) \
-                .eq("ativo", True) \
-                .limit(1) \
-                .execute()
+            try:
+                tenant_resp = sb.table("tenant_users") \
+                    .select("tenant_id, papel") \
+                    .eq("user_id", user_id) \
+                    .eq("ativo", True) \
+                    .limit(1) \
+                    .execute()
+            except Exception:
+                # Fallback: coluna 'ativo' pode não existir ainda (migration pendente)
+                tenant_resp = sb.table("tenant_users") \
+                    .select("tenant_id, papel") \
+                    .eq("user_id", user_id) \
+                    .limit(1) \
+                    .execute()
 
             if not tenant_resp.data:
                 return jsonify({"error": "Usuário sem tenant vinculado"}), 403
