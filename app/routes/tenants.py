@@ -64,7 +64,7 @@ def update_my_tenant():
 def list_users():
     sb   = get_supabase_admin()
     resp = sb.table("tenant_users") \
-        .select("id, user_id, papel, ativo, username, criado_em") \
+        .select("id, user_id, papel, ativo, criado_em") \
         .eq("tenant_id", request.tenant_id) \
         .order("criado_em") \
         .execute()
@@ -83,11 +83,14 @@ def list_users():
     for row in resp.data:
         email = auth_map.get(row["user_id"])
         if email and email.endswith(INTERNAL_DOMAIN):
+            username = email.replace(INTERNAL_DOMAIN, "")
             row["email"] = None
-            row["display_login"] = row.get("username") or email.replace(INTERNAL_DOMAIN, "")
+            row["username"] = username
+            row["display_login"] = username
         else:
             row["email"] = email or None
-            row["display_login"] = row.get("username") or email or "—"
+            row["username"] = None
+            row["display_login"] = email or "—"
         users.append(row)
     return success(users)
 
@@ -203,13 +206,20 @@ def invite_user():
         return error("Este login já é funcionário desta empresa", 409)
 
     try:
-        sb.table("tenant_users").insert({
+        row = {
             "tenant_id": request.tenant_id,
             "user_id":   user_id,
             "papel":     papel,
-            "username":  login if is_username else None,
             "ativo":     True,
-        }).execute()
+        }
+        # username só insere se a coluna existir no schema
+        try:
+            sb.table("tenant_users").insert({**row, "username": login if is_username else None}).execute()
+        except Exception as e:
+            if "username" in str(e) and "schema cache" in str(e):
+                sb.table("tenant_users").insert(row).execute()
+            else:
+                raise
     except Exception as e:
         try: sb.auth.admin.delete_user(user_id)
         except: pass
