@@ -85,7 +85,7 @@ def get_order(order_id):
         return error("Pedido não encontrado", 404)
 
     items = sb.table("order_items") \
-        .select("*, products(nome, codigo_barras, destino)") \
+        .select("*, products(nome, codigo_barras)") \
         .eq("order_id", order_id).execute()
 
     result = order.data
@@ -220,6 +220,7 @@ def confirmar_item_garcom(order_id, item_id):
 
     sb.table("order_items").update({
         "status_item": "pronto",
+        "confirmado_garcom": True
     }).eq("id", item_id).execute()
 
     return success(message=f"Item '{item.data['nome']}' confirmado como entregue.")
