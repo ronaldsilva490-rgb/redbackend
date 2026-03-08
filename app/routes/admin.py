@@ -220,11 +220,18 @@ def activate_admin(admin_id):
 @admin_bp.delete("/<admin_id>")
 @require_admin
 def delete_admin(admin_id):
-    if admin_id == request.admin_id:
+    if str(admin_id) == str(request.admin_id):
         return error("Você não pode deletar sua própria conta")
     sb = get_supabase_admin()
-    sb.table("admin_users").delete().eq("id", admin_id).execute()
-    return success(message="Admin removido")
+    try:
+        # Verifica se o admin existe antes de deletar
+        check = sb.table("admin_users").select("id").eq("id", admin_id).execute()
+        if not check.data:
+            return error("Administrador não encontrado", 404)
+        sb.table("admin_users").delete().eq("id", admin_id).execute()
+        return success(message="Admin removido")
+    except Exception as e:
+        return error(f"Erro ao remover administrador: {str(e)}", 500)
 
 
 # ═══════════════════════════════════════════════════════════
@@ -341,6 +348,94 @@ def system_status():
         results["github_backend"] = {"ok": False, "label": "GitHub Backend", "error": str(e)[:80]}
 
     return success(results)
+
+
+# ═══════════════════════════════════════════════════════════
+# NETWORK INFO
+# ═══════════════════════════════════════════════════════════
+
+@admin_bp.get("/network-info")
+@require_admin
+def network_info():
+    """Retorna IP WAN do backend (Fly.io) + geolocalização."""
+    result = {
+        "backend": {"ip": None, "geo": None, "error": None},
+        "client":  {"ip": None, "geo": None, "error": None},
+    }
+
+    # ── IP WAN do backend (Fly.io) ──
+    try:
+        r = requests.get("https://api.ipify.org?format=json", timeout=6)
+        backend_ip = r.json().get("ip")
+        result["backend"]["ip"] = backend_ip
+
+        # Geolocalização do backend
+        geo = requests.get(f"https://ipapi.co/{backend_ip}/json/", timeout=6).json()
+        result["backend"]["geo"] = {
+            "city":        geo.get("city"),
+            "region":      geo.get("region"),
+            "country":     geo.get("country_name"),
+            "country_code": geo.get("country_code"),
+            "latitude":    geo.get("latitude"),
+            "longitude":   geo.get("longitude"),
+            "org":         geo.get("org"),
+            "timezone":    geo.get("timezone"),
+        }
+    except Exception as e:
+        result["backend"]["error"] = str(e)[:120]
+
+    # ── IP WAN do frontend (Vercel) ──
+    try:
+        vercel_url = os.getenv("VERCEL_URL", "https://redcomercialweb.vercel.app")
+        r = requests.get(f"{vercel_url}/api/client-ip", timeout=6)
+        if r.status_code == 200:
+            frontend_ip = r.json().get("ip")
+        else:
+            # fallback: resolve pelo DNS do domínio Vercel
+            import socket
+            host = vercel_url.replace("https://", "").replace("http://", "").split("/")[0]
+            frontend_ip = socket.gethostbyname(host)
+        result["frontend"] = {"ip": frontend_ip, "geo": None, "error": None}
+
+        if frontend_ip:
+            geo = requests.get(f"https://ipapi.co/{frontend_ip}/json/", timeout=6).json()
+            result["frontend"]["geo"] = {
+                "city":         geo.get("city"),
+                "region":       geo.get("region"),
+                "country":      geo.get("country_name"),
+                "country_code": geo.get("country_code"),
+                "latitude":     geo.get("latitude"),
+                "longitude":    geo.get("longitude"),
+                "org":          geo.get("org"),
+                "timezone":     geo.get("timezone"),
+            }
+    except Exception as e:
+        result["frontend"] = {"ip": None, "geo": None, "error": str(e)[:120]}
+
+    # ── IP real do admin (quem fez a request ao backend) ──
+    try:
+        forwarded = request.headers.get("X-Forwarded-For", "")
+        client_ip = forwarded.split(",")[0].strip() if forwarded else request.remote_addr
+        result["client"]["ip"] = client_ip
+
+        if client_ip and client_ip not in ("127.0.0.1", "::1"):
+            geo = requests.get(f"https://ipapi.co/{client_ip}/json/", timeout=6).json()
+            result["client"]["geo"] = {
+                "city":         geo.get("city"),
+                "region":       geo.get("region"),
+                "country":      geo.get("country_name"),
+                "country_code": geo.get("country_code"),
+                "latitude":     geo.get("latitude"),
+                "longitude":    geo.get("longitude"),
+                "org":          geo.get("org"),
+                "timezone":     geo.get("timezone"),
+            }
+        else:
+            result["client"]["geo"] = {"city": "Localhost", "country": "Local"}
+    except Exception as e:
+        result["client"]["error"] = str(e)[:120]
+
+    return success(result)
 
 
 # ═══════════════════════════════════════════════════════════
