@@ -50,9 +50,9 @@ def check_username_available(sb, username: str, tenant_id: str = None) -> bool:
 
 @auth_bp.post("/register")
 def register():
-    """Cria usuário + tenant + vínculo como dono."""
+    """Cria usuário + tenant + vínculo como dono. Rollback completo em caso de falha."""
     body     = request.get_json() or {}
-    login    = body.get("email", "").strip()   # aceita email ou username
+    login    = body.get("email", "").strip()
     password = body.get("password", "")
     tenant   = body.get("tenant", {})
 
@@ -68,6 +68,29 @@ def register():
     auth_email = to_auth_email(login)
     sb = get_supabase_admin()
 
+    # ── Verificação prévia: email já existe no Auth? ──────────────────────────
+    # Evita o "usuário fantasma" — se já existe no Auth mas não tem tenant,
+    # retorna erro claro em vez de tentar criar e falhar com 422.
+    try:
+        existing_users = sb.auth.admin.list_users()
+        for u in existing_users:
+            if u.email and u.email.lower() == auth_email.lower():
+                # Verifica se tem tenant vinculado
+                link = sb.table("tenant_users").select("id").eq("user_id", u.id).execute()
+                if link.data:
+                    return error("Este e-mail já está cadastrado", 409)
+                else:
+                    # Usuário fantasma: existe no Auth mas sem tenant → limpa e recria
+                    try:
+                        sb.auth.admin.delete_user(u.id)
+                    except Exception:
+                        pass
+                    break
+    except Exception:
+        pass  # Se não conseguir listar, tenta criar e deixa o create_user tratar
+
+    # ── Etapa 1: cria no Supabase Auth ───────────────────────────────────────
+    user_id = None
     try:
         auth_resp = sb.auth.admin.create_user({
             "email":         auth_email,
@@ -78,9 +101,11 @@ def register():
     except Exception as e:
         msg = str(e)
         if "already registered" in msg or "already exists" in msg:
-            return error("Este login já está cadastrado", 409)
+            return error("Este e-mail já está cadastrado", 409)
         return error(f"Erro ao criar usuário: {msg}", 400)
 
+    # ── Etapa 2: cria o tenant ────────────────────────────────────────────────
+    tenant_id = None
     try:
         slug_base = slugify(tenant["nome"])
         slug = slug_base
@@ -103,10 +128,12 @@ def register():
         }).execute()
         tenant_id = tenant_resp.data[0]["id"]
     except Exception as e:
+        # Rollback: remove usuário do Auth
         try: sb.auth.admin.delete_user(user_id)
         except: pass
         return error(f"Erro ao criar negócio: {str(e)}", 500)
 
+    # ── Etapa 3: vincula usuário ao tenant ────────────────────────────────────
     try:
         sb.table("tenant_users").insert({
             "tenant_id": tenant_id,
@@ -114,6 +141,11 @@ def register():
             "papel":     "dono",
         }).execute()
     except Exception as e:
+        # Rollback completo: remove tenant E usuário
+        try: sb.table("tenants").delete().eq("id", tenant_id).execute()
+        except: pass
+        try: sb.auth.admin.delete_user(user_id)
+        except: pass
         return error(f"Erro ao vincular usuário: {str(e)}", 500)
 
     return success({"tenant_id": tenant_id, "slug": slug}, "Negócio criado com sucesso!", 201)
