@@ -152,7 +152,7 @@ def registrar_movimentacao(current_user):
             
             # Atualizar produto
             prod_resp = supabase.table('products')\
-                .update({'estoque': novo_estoque})\
+                .update({'estoque_atual': novo_estoque})\
                 .eq('id', dados['produto_id'])\
                 .execute()
             
