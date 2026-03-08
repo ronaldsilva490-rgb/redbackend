@@ -9,40 +9,49 @@ products_bp = Blueprint("products", __name__)
 
 
 def _to_frontend(p):
-    """Mapeia campos do banco para nomes esperados pelo frontend."""
+    """Mapeia campos do banco para nomes esperados pelo frontend.
+    Banco → Frontend: preco → preco_venda, imagem_url → foto_url
+    """
     if not p:
         return p
     p = dict(p)
-    # estoque → estoque_atual
-    # estoque_atual is the real column name — no remapping needed
-    # imagens[] → foto_url (primeira imagem)
-    # foto_url já é o nome real — sem remapeamento
+    if "preco" in p:
+        p["preco_venda"] = p["preco"]
+    if "imagem_url" in p:
+        p["foto_url"] = p["imagem_url"]
     return p
 
 def _clean(body):
-    """Normaliza campos do frontend para nomes/tipos corretos do banco."""
-    # Mapeia nomes frontend → banco
-    # estoque_atual é o nome real da coluna no banco (não renomeia)
-    # foto_url é o nome real da coluna no banco (TEXT, não array)
-    if body.get("foto_url") == "":
-        body["foto_url"] = None
-    # categoria texto livre → salva em 'descricao' extra ou ignora categoria_id
-    body.pop("categoria_id", None)   # nunca vem do frontend simples
-    body.pop("destino", None)        # coluna não existe no schema
+    """Normaliza campos do frontend para nomes/tipos corretos do banco.
+    Colunas reais: id, tenant_id, nome, descricao, categoria, preco, preco_custo,
+                   estoque_atual(int), estoque_minimo(int), unidade, codigo_barras,
+                   imagem_url, ativo, created_at, updated_at
+    """
+    # preco_venda (frontend) → preco (banco)
+    if "preco_venda" in body:
+        body["preco"] = body.pop("preco_venda")
 
-    # Numéricos
-    for f in ["preco_venda", "preco_custo", "estoque_atual", "estoque_minimo"]:
+    # foto_url (frontend) → imagem_url (banco)
+    if "foto_url" in body:
+        body["imagem_url"] = body.pop("foto_url") or None
+
+    # Remove colunas que não existem no banco
+    for f in ["sku", "categoria_id", "destino", "imagens", "tags", "peso",
+              "dimensoes", "localizacao", "precisa_receita", "controlado",
+              "margem_percentual", "preco_promocial"]:
+        body.pop(f, None)
+
+    # Numéricos: preco/preco_custo como float, estoques como int
+    for f in ["preco", "preco_custo"]:
         val = body.get(f)
-        if val == "" or val is None:
-            body[f] = 0
-        else:
-            try:
-                body[f] = float(val)
-            except (ValueError, TypeError):
-                body[f] = 0
+        body[f] = float(val) if val not in ("", None) else None
+    for f in ["estoque_atual", "estoque_minimo"]:
+        val = body.get(f)
+        try: body[f] = int(float(val)) if val not in ("", None) else 0
+        except: body[f] = 0
 
     # Strings opcionais → None se vazio
-    for f in ["descricao", "categoria", "codigo_barras"]:
+    for f in ["descricao", "categoria", "codigo_barras", "imagem_url", "unidade"]:
         if body.get(f) == "":
             body[f] = None
 
@@ -94,36 +103,20 @@ def create_product():
         return error("Preço de venda é obrigatório")
 
     body["tenant_id"] = request.tenant_id
-    body.setdefault("estoque_atual",   0)
+    body.setdefault("estoque_atual",  0)
     body.setdefault("estoque_minimo", 0)
-    body.setdefault("unidade",  "un")
-    body.setdefault("ativo",    True)
+    body.setdefault("unidade", "un")
+    body.setdefault("ativo",   True)
 
-    # sku é NOT NULL no schema — gera automaticamente se não vier
-    if not body.get("sku"):
-        import uuid as _uuid
-        body["sku"] = f"SKU-{str(_uuid.uuid4())[:8].upper()}"
-
-    # Remove campos protegidos
-    for f in ["id", "created_at", "updated_at", "criado_em", "atualizado_em",
-              "margem_percentual"]:
+    # Remove campos protegidos/gerados
+    for f in ["id", "created_at", "updated_at"]:
         body.pop(f, None)
 
-    sb = get_supabase_admin()
     try:
-        resp = sb.table("products").insert(body).execute()
+        resp = get_supabase_admin().table("products").insert(body).execute()
         return success(_to_frontend(resp.data[0]), "Produto cadastrado", 201)
     except Exception as e:
-        # Se falhar por coluna inexistente (ex: categoria), tenta sem ela
-        err_str = str(e)
-        if "categoria" in err_str and "schema" in err_str.lower():
-            body.pop("categoria", None)
-            try:
-                resp = sb.table("products").insert(body).execute()
-                return success(_to_frontend(resp.data[0]), "Produto cadastrado", 201)
-            except Exception as e2:
-                return error(f"Erro ao cadastrar: {str(e2)}", 500)
-        return error(f"Erro ao cadastrar: {err_str}", 500)
+        return error(f"Erro ao cadastrar: {str(e)}", 500)
 
 
 @products_bp.put("/<product_id>")
@@ -131,8 +124,7 @@ def create_product():
 def update_product(product_id):
     body = request.get_json() or {}
     body = _clean(body)
-    for f in ["id", "tenant_id", "created_at", "updated_at", "criado_em",
-              "atualizado_em", "margem_percentual", "sku"]:
+    for f in ["id", "tenant_id", "created_at", "updated_at"]:
         body.pop(f, None)
 
     try:
