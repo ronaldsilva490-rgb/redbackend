@@ -172,7 +172,7 @@ def listar_vendas():
         limite = min(int(request.args.get("limite", 50)), 200)
         offset = int(request.args.get("offset", 0))
         
-        q = sb.table("vendas").select("*, clientes(nome, email)") \
+        q = sb.table("vendas").select("*, clients(nome, email)") \
             .eq("tenant_id", tenant_id) \
             .order("criado_em", desc=True) \
             .limit(limite) \
