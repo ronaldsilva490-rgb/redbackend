@@ -53,11 +53,11 @@ def listar_movimentacoes(current_user):
         if tipo:
             q = q.eq('tipo', tipo)
         if data_inicio:
-            q = q.gte('criado_em', f"{data_inicio}T00:00:00")
+            q = q.gte('created_at', f"{data_inicio}T00:00:00")
         if data_fim:
-            q = q.lte('criado_em', f"{data_fim}T23:59:59")
+            q = q.lte('created_at', f"{data_fim}T23:59:59")
         
-        q = q.order('criado_em', desc=True)\
+        q = q.order('created_at', desc=True)\
             .range(offset, offset + limit - 1)
         
         response = q.execute()
@@ -106,7 +106,7 @@ def registrar_movimentacao(current_user):
         
         # Obter produto atual
         produto_resp = supabase.table('products')\
-            .select('estoque')\
+            .select('estoque_atual')\
             .eq('id', dados['produto_id'])\
             .eq('tenant_id', dados['tenant_id'])\
             .execute()
@@ -220,7 +220,7 @@ def resumo_estoque(current_user):
         
         # Total de produtos
         produtos = supabase.table('products')\
-            .select('estoque, preco_custo')\
+            .select('estoque_atual, preco_custo')\
             .eq('tenant_id', tenant_id)\
             .eq('ativo', True)\
             .execute()
