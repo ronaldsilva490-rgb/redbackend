@@ -518,15 +518,19 @@ def list_admins():
     
     try:
         admins_resp = sb.table("admin_users") \
-            .select("id, nome, username, email, ativo, created_at") \
-            .order("created_at", desc=True) \
+            .select("id, nome, username, email, ativo, criado_em") \
+            .order("criado_em", desc=True) \
             .execute()
         
         return success({
             "admins": admins_resp.data or []
         }, "Administradores carregados com sucesso")
     except Exception as e:
-        return error(f"Erro ao listar administradores: {str(e)}", 500)
+        msg = str(e)
+        # Tabela admin_users não existe ainda — instrui o usuário
+        if "relation" in msg and "does not exist" in msg:
+            return error("Tabela admin_users não encontrada. Execute ADMIN_SCHEMA.sql no Supabase.", 503)
+        return error(f"Erro ao listar administradores: {msg}", 500)
 
 
 @auth_bp.post("/admin/deactivate/<admin_id>")
