@@ -93,9 +93,9 @@ def update_my_tenant():
 def list_users():
     sb   = get_supabase_admin()
     resp = sb.table("tenant_users") \
-        .select("id, user_id, papel, ativo, criado_em") \
+        .select("id, user_id, papel, ativo, created_at") \
         .eq("tenant_id", request.tenant_id) \
-        .order("criado_em") \
+        .order("created_at") \
         .execute()
 
     if not resp.data:
