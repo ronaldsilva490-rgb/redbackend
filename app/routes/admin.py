@@ -357,10 +357,60 @@ def system_status():
 @admin_bp.get("/network-info")
 @require_admin
 def network_info():
-    """Retorna IP WAN do backend (Fly.io) + geolocalização."""
+    """Retorna IP WAN + geolocalização do backend, frontend e admin."""
+    import socket
+
+    def geolocate(ip: str) -> dict:
+        """
+        Geolocaliza um IP usando ip-api.com (gratuito, sem chave, 45 req/min).
+        Fallback para ipwho.is se falhar.
+        """
+        try:
+            r = requests.get(
+                f"http://ip-api.com/json/{ip}?fields=status,message,country,countryCode,regionName,city,lat,lon,timezone,org,isp",
+                timeout=6
+            )
+            if r.status_code == 200 and r.text.strip():
+                d = r.json()
+                if d.get("status") == "success":
+                    return {
+                        "city":         d.get("city"),
+                        "region":       d.get("regionName"),
+                        "country":      d.get("country"),
+                        "country_code": d.get("countryCode"),
+                        "latitude":     d.get("lat"),
+                        "longitude":    d.get("lon"),
+                        "org":          d.get("org") or d.get("isp"),
+                        "timezone":     d.get("timezone"),
+                    }
+        except Exception:
+            pass
+
+        # Fallback: ipwho.is
+        try:
+            r2 = requests.get(f"https://ipwho.is/{ip}", timeout=6)
+            if r2.status_code == 200 and r2.text.strip():
+                d = r2.json()
+                if d.get("success"):
+                    return {
+                        "city":         d.get("city"),
+                        "region":       d.get("region"),
+                        "country":      d.get("country"),
+                        "country_code": d.get("country_code"),
+                        "latitude":     d.get("latitude"),
+                        "longitude":    d.get("longitude"),
+                        "org":          d.get("connection", {}).get("org"),
+                        "timezone":     d.get("timezone", {}).get("id"),
+                    }
+        except Exception:
+            pass
+
+        return None
+
     result = {
-        "backend": {"ip": None, "geo": None, "error": None},
-        "client":  {"ip": None, "geo": None, "error": None},
+        "backend":  {"ip": None, "geo": None, "error": None},
+        "frontend": {"ip": None, "geo": None, "error": None},
+        "client":   {"ip": None, "geo": None, "error": None},
     }
 
     # ── IP WAN do backend (Fly.io) ──
@@ -368,70 +418,32 @@ def network_info():
         r = requests.get("https://api.ipify.org?format=json", timeout=6)
         backend_ip = r.json().get("ip")
         result["backend"]["ip"] = backend_ip
-
-        # Geolocalização do backend
-        geo = requests.get(f"https://ipapi.co/{backend_ip}/json/", timeout=6).json()
-        result["backend"]["geo"] = {
-            "city":        geo.get("city"),
-            "region":      geo.get("region"),
-            "country":     geo.get("country_name"),
-            "country_code": geo.get("country_code"),
-            "latitude":    geo.get("latitude"),
-            "longitude":   geo.get("longitude"),
-            "org":         geo.get("org"),
-            "timezone":    geo.get("timezone"),
-        }
+        if backend_ip:
+            result["backend"]["geo"] = geolocate(backend_ip)
     except Exception as e:
         result["backend"]["error"] = str(e)[:120]
 
-    # ── IP WAN do frontend (Vercel) ──
+    # ── IP do frontend (Vercel) via DNS ──
     try:
-        vercel_url = os.getenv("VERCEL_URL", "https://redcomercialweb.vercel.app")
-        r = requests.get(f"{vercel_url}/api/client-ip", timeout=6)
-        if r.status_code == 200:
-            frontend_ip = r.json().get("ip")
-        else:
-            # fallback: resolve pelo DNS do domínio Vercel
-            import socket
-            host = vercel_url.replace("https://", "").replace("http://", "").split("/")[0]
-            frontend_ip = socket.gethostbyname(host)
-        result["frontend"] = {"ip": frontend_ip, "geo": None, "error": None}
-
+        vercel_url = os.getenv("VERCEL_FRONTEND_URL", "https://redcomercialweb.vercel.app")
+        host = vercel_url.replace("https://", "").replace("http://", "").split("/")[0]
+        frontend_ip = socket.gethostbyname(host)
+        result["frontend"]["ip"] = frontend_ip
         if frontend_ip:
-            geo = requests.get(f"https://ipapi.co/{frontend_ip}/json/", timeout=6).json()
-            result["frontend"]["geo"] = {
-                "city":         geo.get("city"),
-                "region":       geo.get("region"),
-                "country":      geo.get("country_name"),
-                "country_code": geo.get("country_code"),
-                "latitude":     geo.get("latitude"),
-                "longitude":    geo.get("longitude"),
-                "org":          geo.get("org"),
-                "timezone":     geo.get("timezone"),
-            }
+            result["frontend"]["geo"] = geolocate(frontend_ip)
     except Exception as e:
-        result["frontend"] = {"ip": None, "geo": None, "error": str(e)[:120]}
+        result["frontend"]["error"] = str(e)[:120]
 
-    # ── IP real do admin (quem fez a request ao backend) ──
+    # ── IP real do admin (extraído do request) ──
     try:
         forwarded = request.headers.get("X-Forwarded-For", "")
         client_ip = forwarded.split(",")[0].strip() if forwarded else request.remote_addr
         result["client"]["ip"] = client_ip
 
         if client_ip and client_ip not in ("127.0.0.1", "::1"):
-            geo = requests.get(f"https://ipapi.co/{client_ip}/json/", timeout=6).json()
-            result["client"]["geo"] = {
-                "city":         geo.get("city"),
-                "region":       geo.get("region"),
-                "country":      geo.get("country_name"),
-                "country_code": geo.get("country_code"),
-                "latitude":     geo.get("latitude"),
-                "longitude":    geo.get("longitude"),
-                "org":          geo.get("org"),
-                "timezone":     geo.get("timezone"),
-            }
+            result["client"]["geo"] = geolocate(client_ip)
         else:
-            result["client"]["geo"] = {"city": "Localhost", "country": "Local"}
+            result["client"]["geo"] = {"city": "Localhost", "country": "Local", "country_code": None}
     except Exception as e:
         result["client"]["error"] = str(e)[:120]
 
