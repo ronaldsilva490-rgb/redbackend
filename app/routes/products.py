@@ -14,8 +14,7 @@ def _to_frontend(p):
         return p
     p = dict(p)
     # estoque → estoque_atual
-    if "estoque" in p and "estoque_atual" not in p:
-        p["estoque_atual"] = p["estoque"]
+    # estoque_atual is the real column name — no remapping needed
     # imagens[] → foto_url (primeira imagem)
     if "imagens" in p and "foto_url" not in p:
         imgs = p.get("imagens") or []
@@ -25,8 +24,7 @@ def _to_frontend(p):
 def _clean(body):
     """Normaliza campos do frontend para nomes/tipos corretos do banco."""
     # Mapeia nomes frontend → banco
-    if "estoque_atual" in body:
-        body["estoque"] = body.pop("estoque_atual")
+    # estoque_atual é o nome real da coluna no banco (não renomeia)
     if "foto_url" in body:
         url = body.pop("foto_url")
         body["imagens"] = [url] if url else []
@@ -35,7 +33,7 @@ def _clean(body):
     body.pop("destino", None)        # coluna não existe no schema
 
     # Numéricos
-    for f in ["preco_venda", "preco_custo", "estoque", "estoque_minimo"]:
+    for f in ["preco_venda", "preco_custo", "estoque_atual", "estoque_minimo"]:
         val = body.get(f)
         if val == "" or val is None:
             body[f] = 0
@@ -98,7 +96,7 @@ def create_product():
         return error("Preço de venda é obrigatório")
 
     body["tenant_id"] = request.tenant_id
-    body.setdefault("estoque",        0)
+    body.setdefault("estoque_atual",   0)
     body.setdefault("estoque_minimo", 0)
     body.setdefault("unidade",  "un")
     body.setdefault("ativo",    True)
