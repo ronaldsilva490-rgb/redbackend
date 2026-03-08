@@ -12,6 +12,14 @@ CREATE TABLE IF NOT EXISTS tenants (
   slug            TEXT NOT NULL UNIQUE,
   nome            TEXT NOT NULL,
   tipo            TEXT NOT NULL,  -- restaurante, concessionaria, comercio, farmacia, etc
+  CONSTRAINT tenants_tipo_check CHECK (
+    tipo IN (
+      'restaurante', 'concessionaria', 'comercio', 'farmacia',
+      'clinica_consultorio', 'salao_beleza', 'academia',
+      'hotel_hospedagem', 'padaria_confeitaria', 'ecommerce',
+      'prestador_servicos', 'supermercado', 'distribuidora'
+    )
+  ),
   descricao       TEXT,
   logo_url        TEXT,
   
