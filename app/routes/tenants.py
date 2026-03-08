@@ -69,21 +69,25 @@ def list_users():
         .order("criado_em") \
         .execute()
 
+    if not resp.data:
+        return success([])
+
+    # Busca todos os usuários do Auth de uma vez (1 chamada em vez de N)
+    try:
+        all_auth_users = sb.auth.admin.list_users()
+        auth_map = {u.id: u.email for u in all_auth_users if u and u.id}
+    except Exception:
+        auth_map = {}
+
     users = []
     for row in resp.data:
-        try:
-            auth_user = sb.auth.admin.get_user_by_id(row["user_id"])
-            email = auth_user.user.email if auth_user and auth_user.user else None
-            # Esconde domínio interno
-            if email and email.endswith(INTERNAL_DOMAIN):
-                row["email"] = None
-                row["display_login"] = row.get("username") or email.replace(INTERNAL_DOMAIN, "")
-            else:
-                row["email"] = email
-                row["display_login"] = email
-        except Exception:
+        email = auth_map.get(row["user_id"])
+        if email and email.endswith(INTERNAL_DOMAIN):
             row["email"] = None
-            row["display_login"] = row.get("username", "—")
+            row["display_login"] = row.get("username") or email.replace(INTERNAL_DOMAIN, "")
+        else:
+            row["email"] = email or None
+            row["display_login"] = row.get("username") or email or "—"
         users.append(row)
     return success(users)
 
@@ -193,6 +197,9 @@ def invite_user():
     existente = sb.table("tenant_users").select("id") \
         .eq("user_id", user_id).eq("tenant_id", request.tenant_id).execute()
     if existente.data:
+        # Rollback: usuário criado no Auth mas já vinculado → remove do Auth
+        try: sb.auth.admin.delete_user(user_id)
+        except: pass
         return error("Este login já é funcionário desta empresa", 409)
 
     try:
