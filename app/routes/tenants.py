@@ -5,7 +5,7 @@ from ..utils.response import success, error
 import re
 
 tenants_bp = Blueprint("tenants", __name__)
-INTERNAL_DOMAIN = "@red.internal"
+INTERNAL_DOMAIN = ".red.internal"
 
 PAPEIS_VALIDOS = ("gerente", "vendedor", "caixa", "mecanico", "garcom", "cozinheiro", "entregador")
 

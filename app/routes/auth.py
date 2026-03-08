@@ -12,7 +12,7 @@ import re
 
 auth_bp = Blueprint("auth", __name__)
 
-INTERNAL_DOMAIN = "@red.internal"
+INTERNAL_DOMAIN = ".red.internal"
 
 
 def slugify(text):
