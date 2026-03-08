@@ -45,14 +45,43 @@ def get_my_tenant():
 @require_papel("dono", "gerente")
 def update_my_tenant():
     body = request.get_json() or {}
-    for field in ("id", "slug", "plano", "created_at", "updated_at"):
-        body.pop(field, None)
-    for field in ("cnpj", "telefone", "email", "endereco", "cidade", "estado",
-                  "pix_chave", "pix_tipo", "pix_titular", "logo_url"):
-        if body.get(field) == "":
-            body[field] = None
-    resp = get_supabase_admin().table("tenants") \
-        .update(body).eq("id", request.tenant_id).execute()
+
+    # Campos permitidos na tabela tenants
+    ALLOWED = {
+        "nome", "descricao", "logo_url",
+        "cnpj", "inscricao_estadual", "razao_social",
+        "telefone", "email", "website",
+        "endereco", "numero", "complemento", "bairro",
+        "cidade", "estado", "cep",
+        "moeda", "fuso_horario", "config",
+        # PIX — só inclui se a coluna existir (adicionada via migration)
+        "pix_chave", "pix_tipo", "pix_titular",
+    }
+
+    # Remove campos protegidos / inexistentes
+    body = {k: v for k, v in body.items() if k in ALLOWED}
+
+    # Converte strings vazias em NULL
+    for k in list(body.keys()):
+        if body[k] == "":
+            body[k] = None
+
+    if not body:
+        return error("Nenhum campo válido para atualizar")
+
+    sb = get_supabase_admin()
+
+    # Tenta salvar com campos PIX; se der erro de schema, salva sem eles
+    pix_fields = {"pix_chave", "pix_tipo", "pix_titular"}
+    try:
+        resp = sb.table("tenants").update(body).eq("id", request.tenant_id).execute()
+    except Exception as e:
+        if any(f in str(e) for f in pix_fields) and "schema" in str(e).lower():
+            body_sem_pix = {k: v for k, v in body.items() if k not in pix_fields}
+            resp = sb.table("tenants").update(body_sem_pix).eq("id", request.tenant_id).execute()
+        else:
+            return error(f"Erro ao atualizar: {str(e)}", 500)
+
     if not resp.data:
         return error("Empresa não encontrada", 404)
     return success(resp.data[0], "Dados atualizados")
