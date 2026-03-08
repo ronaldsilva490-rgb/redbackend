@@ -5,6 +5,7 @@ Usernames são armazenados como username@red.internal no Supabase Auth.
 """
 from flask import Blueprint, request
 from ..utils.supabase_client import get_supabase, get_supabase_admin
+from ..utils.auth_middleware import require_auth
 from app.config.business_types import validate_business_type, get_all_business_types
 from ..utils.response import success, error
 import re
@@ -397,6 +398,66 @@ def admin_login():
 
     except Exception as e:
         return error(f"Erro ao fazer login: {str(e)}", 500)
+
+
+@auth_bp.post("/register-tenant")
+@require_auth
+def register_tenant(current_user=None):
+    """Cria um tenant vinculado ao usuário autenticado (frontend já criou o usuário via Supabase)."""
+    body = request.get_json() or {}
+    tenant = body.get("tenant", {})
+
+    nome = tenant.get("nome", "").strip()
+    tipo = (tenant.get("tipo") or "").strip()
+
+    if not nome:
+        return error("Nome do negócio é obrigatório")
+    if not validate_business_type(tipo):
+        allowed = ", ".join(get_all_business_types())
+        return error(f"Tipo inválido. Use: {allowed}")
+
+    sb = get_supabase_admin()
+    try:
+        slug_base = slugify(nome)
+        slug = slug_base
+        i = 1
+        while True:
+            existing = sb.table("tenants").select("id").eq("slug", slug).execute()
+            if not existing.data:
+                break
+            slug = f"{slug_base}-{i}"
+            i += 1
+
+        tenant_resp = sb.table("tenants").insert({
+            "nome": nome,
+            "slug": slug,
+            "tipo": tipo,
+            "cnpj": tenant.get("cnpj") or None,
+            "telefone": tenant.get("telefone") or None,
+            "cidade": tenant.get("cidade") or None,
+            "estado": tenant.get("estado") or None,
+        }).execute()
+        tenant_id = tenant_resp.data[0]["id"]
+    except Exception as e:
+        return error(f"Erro ao criar negócio: {str(e)}", 500)
+
+    try:
+        user_id = request.user_id
+        sb.table("tenant_users").insert({
+            "tenant_id": tenant_id,
+            "user_id": user_id,
+            "papel": "dono",
+            "username": None,
+            "ativo": True,
+        }).execute()
+    except Exception as e:
+        try:
+            sb.table("tenants").delete().eq("id", tenant_id).execute()
+        except:
+            pass
+        return error(f"Erro ao vincular usuário: {str(e)}", 500)
+
+    return success({"tenant_id": tenant_id, "slug": slug}, "Negócio criado com sucesso!", 201)
 
 
 @auth_bp.get("/admin/verifica-token")
