@@ -101,7 +101,7 @@ def admin_register():
             "nome":     nome,
             "username": username,
             "email":    email,
-            "senha":    hashed,
+            "senha_hash": hashed,
             "ativo":    True,
         }).execute()
 
@@ -138,7 +138,7 @@ def admin_login():
             return error("Credenciais inválidas", 401)
 
         admin = resp.data[0]
-        if not bcrypt.checkpw(senha.encode(), admin["senha"].encode()):
+        if not bcrypt.checkpw(senha.encode(), admin["senha_hash"].encode()):
             return error("Credenciais inválidas", 401)
 
         token = generate_admin_token(admin["id"])
