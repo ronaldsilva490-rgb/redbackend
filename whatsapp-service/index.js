@@ -521,17 +521,30 @@ app.get('/status/:tenantId', (req, res) => {
 })
 
 app.post('/start/:tenantId', async (req, res) => {
-    const { tenantId } = req.params
-    console.log(`[API /start] Recebido para tenantId: "${tenantId}"`)
-    const existing = sessions.get(tenantId)
-    console.log(`[API /start] Sessão existente: ${!!existing} | status: ${existing?.status}`)
-    if (existing && existing.status !== 'disconnected') {
-        console.log(`[API /start] Sessão já ativa, abortando criação nova.`)
-        return res.json({ success: true, message: 'Sessão já está rodando ou em processo de conexão.', status: existing.status })
+    try {
+        const { tenantId } = req.params
+        console.log(`[API /start] Recebido para tenantId: "${tenantId}"`)
+        const existing = sessions.get(tenantId)
+        console.log(`[API /start] Sessão existente: ${!!existing} | status: ${existing?.status}`)
+        
+        if (existing && existing.status !== 'disconnected' && existing.status !== 'error') {
+            console.log(`[API /start] Sessão já ativa (${existing.status}), ignorando novo start.`)
+            return res.json({ success: true, message: 'Sessão já está rodando ou em processo de conexão.', status: existing.status })
+        }
+
+        console.log(`[API /start] Chamando connectToWhatsApp('${tenantId}')...`)
+        // Chama em background sem await, mas com .catch para logar erros async
+        connectToWhatsApp(tenantId).catch(err => {
+            console.error(`[BG CONN] Falha crítica ao iniciar conexão para ${tenantId}:`, err)
+        })
+
+        return res.json({ success: true, message: 'Iniciando conexão para o tenant...', status: 'connecting' })
+    } catch (err) {
+        console.error(`[API /start] Erro interno 500:`, err)
+        if (!res.headersSent) {
+            res.status(500).json({ success: false, error: err.message || 'Erro interno no microserviço' })
+        }
     }
-    console.log(`[API /start] Chamando connectToWhatsApp('${tenantId}')...`)
-    connectToWhatsApp(tenantId)
-    res.json({ success: true, message: 'Iniciando conexão para o tenant...', status: 'connecting' })
 })
 
 app.post('/stop/:tenantId', async (req, res) => {

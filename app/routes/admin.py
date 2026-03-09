@@ -586,10 +586,15 @@ def whatsapp_start():
     import os
     node_url = os.environ.get('WHATSAPP_SERVICE_URL', 'http://localhost:3001')
     try:
-        resp = requests.post(f"{node_url}/start/admin", timeout=10)
-        return success(resp.json()), resp.status_code
+        resp = requests.post(f"{node_url}/start/admin", timeout=15)
+        try:
+            data = resp.json()
+        except:
+            data = {"message": resp.text}
+        
+        return success(data), resp.status_code
     except Exception as e:
-        return error(f"Erro ao iniciar WhatsApp Admin: {str(e)}", 500)
+        return error(f"Falha na comunicação com microserviço: {str(e)}", 500)
 
 @admin_bp.post("/whatsapp/stop")
 @require_admin
@@ -598,10 +603,15 @@ def whatsapp_stop():
     import os
     node_url = os.environ.get('WHATSAPP_SERVICE_URL', 'http://localhost:3001')
     try:
-        resp = requests.post(f"{node_url}/stop/admin", timeout=10)
-        return success(resp.json()), resp.status_code
+        resp = requests.post(f"{node_url}/stop/admin", timeout=15)
+        try:
+            data = resp.json()
+        except:
+            data = {"message": resp.text}
+            
+        return success(data), resp.status_code
     except Exception as e:
-        return error(f"Erro ao parar WhatsApp Admin: {str(e)}", 500)
+        return error(f"Falha na comunicação com microserviço: {str(e)}", 500)
 
 @admin_bp.get("/whatsapp/status")
 @require_admin
