@@ -266,6 +266,7 @@ async function connectToWhatsApp(tenantId) {
                     console.error(`[RAG ERROR] Falha ao buscar dados de memória/perfil:`, e.message)
                 }
 
+                const systemPrompt = session.aiConfigs?.system_prompt || "Você é um assistente virtual prestativo e descontraído."
                 const contextCombined = `${conversationMemory}${senderProfile}`
                 console.log(`[RAG] 🧩 Contexto combinado pronto (${contextCombined.length} chars)`)
 
