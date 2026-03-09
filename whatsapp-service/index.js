@@ -71,27 +71,34 @@ async function connectToWhatsApp(tenantId) {
 
         if (connection === 'close') {
             const statusCode = (lastDisconnect?.error)?.output?.statusCode
-            const shouldReconnect = statusCode !== DisconnectReason.loggedOut && statusCode !== 428
-            console.log(`❌ Conexão Fechada (Tenant: ${tenantId}). Reconectar: ${shouldReconnect}. Status Code: ${statusCode}`)
+            console.log(`❌ Conexão Fechada (Tenant: ${tenantId}). Status Code: ${statusCode}`)
             session.status = 'disconnected'
             session.lastQr = null
-            
-            if (statusCode === 428) {
-                console.log(`⚠️ ERRO 428 (Precondition Required) detectado no Tenant ${tenantId}. Forçando limpeza da sessão corrompida.`)
-            }
 
-            if (shouldReconnect) {
-                connectToWhatsApp(tenantId)
-            } else {
-                console.log(`🚫 Tenant ${tenantId} Deslogado ou Corrompido. Limpando...`)
+            if (statusCode === DisconnectReason.loggedOut) {
+                // Logout explícito: limpa tudo e NÃO reconecta
+                console.log(`🚫 Tenant ${tenantId} deslogado explicitamente. Limpando...`)
                 sessions.delete(tenantId)
                 if (tenantId !== 'admin') {
                     await supabase.from('whatsapp_sessions').delete().eq('tenant_id', tenantId)
                 }
-                // Remove pasta de auth por segurança
-                if (fs.existsSync(authPath)) {
-                    fs.rmSync(authPath, { recursive: true, force: true })
+                if (fs.existsSync(authPath)) fs.rmSync(authPath, { recursive: true, force: true })
+
+            } else if (statusCode === 428) {
+                // Auth corrompida: apaga pasta e gera novo QR do zero
+                console.log(`⚠️ Tenant ${tenantId}: auth corrompida (428). Apagando sessão e reiniciando fresh...`)
+                sessions.delete(tenantId)
+                if (tenantId !== 'admin') {
+                    await supabase.from('whatsapp_sessions').delete().eq('tenant_id', tenantId)
                 }
+                if (fs.existsSync(authPath)) fs.rmSync(authPath, { recursive: true, force: true })
+                // Aguarda 2s antes de tentar novamente para evitar race condition
+                setTimeout(() => connectToWhatsApp(tenantId), 2000)
+
+            } else {
+                // Qualquer outro erro: reconecta normalmente
+                console.log(`🔄 Reconectando Tenant ${tenantId}...`)
+                connectToWhatsApp(tenantId)
             }
         } else if (connection === 'open') {
             console.log(`✅ Conexão Aberta (Tenant: ${tenantId})`)
