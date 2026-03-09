@@ -35,36 +35,49 @@ process.on('unhandledRejection', (reason) => {
 
 // ── Funções de Conexão WhatsApp (Multi-Tenant) ──
 async function connectToWhatsApp(tenantId) {
-    console.log(`📡 Iniciando Conexão para Tenant: ${tenantId}`)
+    console.log(`[STEP 1/6] 📡 connectToWhatsApp chamado para Tenant: ${tenantId}`)
     const authPath = path.join(__dirname, `auth_info_baileys/tenant_${tenantId}`)
-    // Garante que o diretório de autenticação exista
+    
+    console.log(`[STEP 2/6] 📁 authPath = ${authPath} | existe: ${fs.existsSync(authPath)}`)
     if (!fs.existsSync(authPath)) {
         fs.mkdirSync(authPath, { recursive: true })
+        console.log(`[STEP 2/6] ✅ Diretório criado.`)
     }
+    
+    console.log(`[STEP 3/6] 🔑 Carregando useMultiFileAuthState...`)
     const { state, saveCreds } = await useMultiFileAuthState(authPath)
-    const { version, isLatest } = await fetchLatestBaileysVersion() // Fetch version for each connection
+    console.log(`[STEP 3/6] ✅ Auth state carregado. Registrado: ${!!state?.creds?.registered}`)
+    
+    console.log(`[STEP 4/6] 🌐 Buscando versão do Baileys...`)
+    const { version, isLatest } = await fetchLatestBaileysVersion()
+    console.log(`[STEP 4/6] ✅ Versão: ${version.join('.')} | isLatest: ${isLatest}`)
 
+    console.log(`[STEP 5/6] 🔌 Criando socket makeWASocket...`)
     const sock = makeWASocket({
-        version, // Usar a versão mais recente
+        version,
         auth: state,
-        printQRInTerminal: false, // QR codes serão retornados via API
+        printQRInTerminal: true, // Imprime QR no terminal do Fly pra debug
         browser: Browsers.macOS('Desktop'),
-        logger: pino({ level: 'silent' }) // Logger silencioso para evitar poluir o console
+        logger: pino({ level: 'warn' }) // warn em vez de silent para capturar erros de conexão
     })
+    console.log(`[STEP 5/6] ✅ Socket criado.`)
 
     const session = { sock, aiConfigs: null, lastQr: null, status: 'connecting' }
     sessions.set(tenantId, session)
+    console.log(`[STEP 6/6] ✅ Sessão registrada no Map. Total de sessões ativas: ${sessions.size}`)
 
     // Carrega configs de IA do Tenant
     await loadTenantAIConfigs(tenantId)
 
     sock.ev.on('connection.update', async (update) => {
         const { connection, lastDisconnect, qr } = update
+        console.log(`[CONNECTION.UPDATE] Tenant: ${tenantId} | connection: ${connection} | qr: ${!!qr} | statusCode: ${(lastDisconnect?.error)?.output?.statusCode}`)
         
         if (qr) {
+            console.log(`[QR] Gerando base64 do QR para Tenant: ${tenantId}...`)
             session.lastQr = await QRCode.toDataURL(qr)
             session.status = 'qrcode'
-            console.log(`🔗 Novo QR Code gerado para Tenant: ${tenantId}`)
+            console.log(`[QR] ✅ QR Code gerado com sucesso para Tenant: ${tenantId}`)
             try {
                 await supabase.from('whatsapp_sessions').upsert({ 
                     tenant_id: tenantId, 
@@ -374,36 +387,44 @@ app.get('/status/:tenantId', (req, res) => {
 
 app.post('/start/:tenantId', async (req, res) => {
     const { tenantId } = req.params
-    if (sessions.has(tenantId) && sessions.get(tenantId).status !== 'disconnected') {
-        return res.json({ success: true, message: 'Sessão já está rodando ou em processo de conexão.', status: sessions.get(tenantId).status })
+    console.log(`[API /start] Recebido para tenantId: "${tenantId}"`)
+    const existing = sessions.get(tenantId)
+    console.log(`[API /start] Sessão existente: ${!!existing} | status: ${existing?.status}`)
+    if (existing && existing.status !== 'disconnected') {
+        console.log(`[API /start] Sessão já ativa, abortando criação nova.`)
+        return res.json({ success: true, message: 'Sessão já está rodando ou em processo de conexão.', status: existing.status })
     }
+    console.log(`[API /start] Chamando connectToWhatsApp('${tenantId}')...`)
     connectToWhatsApp(tenantId)
     res.json({ success: true, message: 'Iniciando conexão para o tenant...', status: 'connecting' })
 })
 
 app.post('/stop/:tenantId', async (req, res) => {
     const { tenantId } = req.params
+    console.log(`[API /stop] Recebido para tenantId: "${tenantId}"`)
     const session = sessions.get(tenantId)
-    
-    // Força a exclusão do dirted folder sempre que alguém pedir stop (Reset Manual Admin)
     const authPath = path.join(__dirname, `auth_info_baileys/tenant_${tenantId}`)
     
+    console.log(`[API /stop] Sessão ativa: ${!!session} | authPath existe: ${fs.existsSync(authPath)}`)
     if (session && session.sock) {
         try {
-            await session.sock.logout() // Isso deve disparar o 'connection.update' com DisconnectReason.loggedOut
-            console.log(`Sessão do Tenant ${tenantId} desconectada via logout.`)
+            await session.sock.logout()
+            console.log(`[API /stop] ✅ logout() executado para Tenant: ${tenantId}`)
             res.json({ success: true, message: 'Sessão desconectada com sucesso.' })
         } catch (e) {
-            console.error(`Erro ao fazer logout do Tenant ${tenantId}:`, e)
-            res.status(500).json({ success: false, message: 'Erro ao desconectar a sessão.' })
+            console.error(`[API /stop] ❌ Erro ao fazer logout do Tenant ${tenantId}:`, e?.message)
+            // Força limpeza mesmo em caso de erro
+            sessions.delete(tenantId)
+            if (fs.existsSync(authPath)) fs.rmSync(authPath, { recursive: true, force: true })
+            console.log(`[API /stop] 🧹 Limpeza forçada após erro de logout.`)
+            res.json({ success: true, message: 'Sessão limpa após erro de logout.' })
         }
     } else {
-        // Se a sessão em RAM morreu mas a pasta corrompida existe, a API deve limpar a pasta pra poder reconectar depois
         if (fs.existsSync(authPath)) {
-             fs.rmSync(authPath, { recursive: true, force: true })
-             console.log(`Limpeza manual da pasta de auth pendente do Tenant ${tenantId}.`)
+            fs.rmSync(authPath, { recursive: true, force: true })
+            console.log(`[API /stop] 🧹 Pasta de auth removida para Tenant: ${tenantId}`)
         }
-        res.json({ success: true, message: 'Nenhuma sessão ativa para este tenant (Pastas limpas se existiam).' })
+        res.json({ success: true, message: 'Nenhuma sessão ativa. Pastas limpas.' })
     }
 })
 
