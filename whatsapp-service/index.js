@@ -114,6 +114,7 @@ async function connectToWhatsApp() {
         if (type !== 'notify') return
         
         const botNumber = jidDecode(sock.user.id)?.user + '@s.whatsapp.net'
+        const botId = botNumber.split('@')[0]
         console.log(`🤖 Bot ID: ${botNumber}`)
 
         for (const msg of messages) {
@@ -122,29 +123,28 @@ async function connectToWhatsApp() {
             const remoteJid = msg.key.remoteJid
             const isGroup = remoteJid.endsWith('@g.us')
             
-            // Captura de texto de diferentes tipos de mensagem
-            const messageType = Object.keys(msg.message)[0]
-            const text = msg.message.conversation || 
-                         msg.message.extendedTextMessage?.text || 
-                         msg.message.imageMessage?.caption || 
-                         msg.message.videoMessage?.caption || ""
+            // Extração resiliente de conteúdo e contexto
+            const m = msg.message
+            const content = m.conversation || m.extendedTextMessage?.text || m.imageMessage?.caption || m.videoMessage?.caption || 
+                          m.viewOnceMessage?.message?.imageMessage?.caption || m.viewOnceMessage?.message?.videoMessage?.caption ||
+                          m.viewOnceMessageV2?.message?.imageMessage?.caption || m.viewOnceMessageV2?.message?.videoMessage?.caption || ""
             
-            // Lógica de Mentions/Replies em Grupos
-            const contextInfo = msg.message[messageType]?.contextInfo
-            const isMentioned = contextInfo?.mentionedJid?.some(jid => jid.includes(botNumber.split('@')[0]))
-            const isReplyToMe = contextInfo?.participant?.includes(botNumber.split('@')[0])
+            const contextInfo = m.extendedTextMessage?.contextInfo || m.imageMessage?.contextInfo || m.videoMessage?.contextInfo ||
+                              m.viewOnceMessage?.message?.imageMessage?.contextInfo || m.viewOnceMessage?.message?.videoMessage?.contextInfo ||
+                              m.viewOnceMessageV2?.message?.imageMessage?.contextInfo || m.viewOnceMessageV2?.message?.videoMessage?.contextInfo
+
+            const isMentioned = !!contextInfo?.mentionedJid?.some(jid => jid.includes(botId))
+            const isReplyToMe = !!contextInfo?.participant?.includes(botId)
             
             if (isGroup) {
-                console.log(`📩 Mensagem em Grupo (${remoteJid}): Mentions: ${contextInfo?.mentionedJid || 'nulo'}, isMentioned: ${isMentioned}, isReplyToMe: ${isReplyToMe}`)
+                console.log(`📩 Grupo (${remoteJid}): text: "${content.substring(0,20)}...", isMentioned: ${isMentioned}, isReplyToMe: ${isReplyToMe}`)
             }
 
             // Responde se: 1. Bot Ativo | 2. PV | 3. Grupo + Menção | 4. Grupo + Resposta ao Bot
             if (aiConfigs.ai_bot_enabled === 'true' && (!isGroup || isMentioned || isReplyToMe)) {
                 console.log(`🤖 IA: Processando mensagem de ${remoteJid}`)
                 
-                // Limpa menção do texto (considerando vários formatos)
-                const botCleanId = botNumber.split('@')[0]
-                const cleanText = text.replace(new RegExp(`@${botCleanId}`, 'g'), '').trim()
+                const cleanText = content.replace(new RegExp(`@${botId}`, 'g'), '').trim()
                 
                 const response = await getGeminiResponse(cleanText || "Oi!")
                 if (response) {
