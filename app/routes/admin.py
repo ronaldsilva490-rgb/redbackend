@@ -579,6 +579,30 @@ def whatsapp_send():
     return error("Engine desconhecida.", 400)
 
 
+@admin_bp.post("/whatsapp/start")
+@require_admin
+def whatsapp_start():
+    """Inicia o microserviço para a sessão 'admin'."""
+    import os
+    node_url = os.environ.get('WHATSAPP_SERVICE_URL', 'http://localhost:3001')
+    try:
+        resp = requests.post(f"{node_url}/start/admin", timeout=5)
+        return jsonify(resp.json()), resp.status_code
+    except Exception as e:
+        return error(f"Erro ao iniciar WhatsApp Admin: {str(e)}", 500)
+
+@admin_bp.post("/whatsapp/stop")
+@require_admin
+def whatsapp_stop():
+    """Para o microserviço para a sessão 'admin'."""
+    import os
+    node_url = os.environ.get('WHATSAPP_SERVICE_URL', 'http://localhost:3001')
+    try:
+        resp = requests.post(f"{node_url}/stop/admin", timeout=5)
+        return jsonify(resp.json()), resp.status_code
+    except Exception as e:
+        return error(f"Erro ao parar WhatsApp Admin: {str(e)}", 500)
+
 @admin_bp.get("/whatsapp/status")
 @require_admin
 def whatsapp_status():

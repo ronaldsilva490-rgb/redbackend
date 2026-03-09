@@ -97,3 +97,20 @@ def disconnect_whatsapp():
         return jsonify(r.json()), r.status_code
     except Exception as e:
         return error(f"Erro ao desconectar: {str(e)}", 503)
+@tenant_ai_bp.post("/ai/list-models")
+@require_auth
+@require_papel("dono", "gerente")
+def list_tenant_ai_models():
+    """Proxy para buscar modelos disponíveis para o tenant."""
+    body = request.get_json() or {}
+    api_key = body.get("api_key")
+    provider = body.get("provider", "gemini")
+    
+    if not api_key:
+        return error("API Key é obrigatória")
+
+    try:
+        r = requests.post(f"{WHATSAPP_SERVICE_URL}/ai/list-models", json={"api_key": api_key, "provider": provider}, timeout=10)
+        return jsonify(r.json()), r.status_code
+    except Exception as e:
+        return error(f"Erro ao listar modelos: {str(e)}", 503)
