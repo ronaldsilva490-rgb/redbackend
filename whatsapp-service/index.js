@@ -1,6 +1,11 @@
 require('dotenv').config()
+const express = require('express')
+const cors = require('cors')
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, makeInMemoryStore, jidDecode } = require('@whiskeysockets/baileys')
 const { GoogleGenerativeAI } = require('@google/generative-ai')
 const { createClient } = require('@supabase/supabase-js')
+const QRCode = require('qrcode')
+const pino = require('pino')
 
 const app = express()
 app.use(cors())
