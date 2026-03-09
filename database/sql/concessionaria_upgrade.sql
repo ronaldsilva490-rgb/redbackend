@@ -38,3 +38,21 @@ ALTER TABLE public.vehicle_costs ENABLE ROW LEVEL SECURITY;
 -- Políticas de Isolamento
 CREATE POLICY "Tenant isolation for leads" ON public.leads FOR ALL USING (tenant_id = public.get_tenant_id());
 CREATE POLICY "Tenant isolation for vehicle_costs" ON public.vehicle_costs FOR ALL USING (tenant_id = public.get_tenant_id());
+
+-- Upgrade na tabela de vendas para suportar o fluxo de Concessionária (Baseado no sales.py v10)
+DO $$ 
+BEGIN 
+    ALTER TABLE public.sales ADD COLUMN IF NOT EXISTS valor_venda numeric DEFAULT 0;
+    ALTER TABLE public.sales ADD COLUMN IF NOT EXISTS valor_entrada numeric DEFAULT 0;
+    ALTER TABLE public.sales ADD COLUMN IF NOT EXISTS financiamento boolean DEFAULT false;
+    ALTER TABLE public.sales ADD COLUMN IF NOT EXISTS financiadora text;
+    ALTER TABLE public.sales ADD COLUMN IF NOT EXISTS parcelas integer DEFAULT 1;
+    ALTER TABLE public.sales ADD COLUMN IF NOT EXISTS juros_percentual numeric DEFAULT 0;
+    ALTER TABLE public.sales ADD COLUMN IF NOT EXISTS juros_tipo text DEFAULT 'price';
+    ALTER TABLE public.sales ADD COLUMN IF NOT EXISTS tipo_venda text DEFAULT 'nova';
+    ALTER TABLE public.sales ADD COLUMN IF NOT EXISTS vendedor_id uuid REFERENCES public.tenant_users(id);
+    ALTER TABLE public.sales ADD COLUMN IF NOT EXISTS data_venda date DEFAULT CURRENT_DATE;
+    ALTER TABLE public.sales ADD COLUMN IF NOT EXISTS forma_entrada text DEFAULT 'Dinheiro';
+EXCEPTION 
+    WHEN others THEN NULL; 
+END $$;
