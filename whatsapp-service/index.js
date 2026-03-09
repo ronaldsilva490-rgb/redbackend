@@ -199,26 +199,27 @@ async function connectToWhatsApp() {
             )
             const isReplyToMe = !!(contextInfo?.participant?.includes(botId) || (botLidShort && contextInfo?.participant?.includes(botLidShort)))
             
-            // Verificação de Prefixo (Case Insensitive)
-            const prefix = aiConfigs.ai_prefix?.trim().toLowerCase()
-            const startsWithPrefix = prefix && content.toLowerCase().startsWith(prefix)
+            // Verificação de Palavra-Chave (Qualquer lugar da frase)
+            const keyword = aiConfigs.ai_prefix?.trim().toLowerCase()
+            const containsKeyword = keyword && content.toLowerCase().includes(keyword)
 
             if (isGroup) {
                 console.log(`📩 [DEBUG GRUPO] text: "${content.substring(0,30)}..."`)
-                console.log(`   - isMentioned: ${isMentioned}, isReplyToMe: ${isReplyToMe}, startsWithPrefix: ${startsWithPrefix}`)
+                console.log(`   - isMentioned: ${isMentioned}, isReplyToMe: ${isReplyToMe}, containsKeyword: ${containsKeyword}`)
             }
 
-            // Responde se: 1. Bot Ativo | 2. PV | 3. Grupo + Menção | 4. Grupo + Resposta ao Bot | 5. Prefixo
-            if (aiConfigs.ai_bot_enabled === 'true' && (!isGroup || isMentioned || isReplyToMe || startsWithPrefix)) {
+            // Responde se: 1. Bot Ativo | 2. PV | 3. Grupo + Menção | 4. Grupo + Resposta ao Bot | 5. Palavra-Chave
+            if (aiConfigs.ai_bot_enabled === 'true' && (!isGroup || isMentioned || isReplyToMe || containsKeyword)) {
                 console.log(`🤖 IA: Processando mensagem de ${remoteJid}`)
                 
-                // Limpa tanto o JID quanto o LID do texto, e também o prefixo
+                // Limpa JID, LID e Palavra-Chave do texto
                 let cleanText = content.replace(new RegExp(`@${botId}`, 'g'), '').trim()
                 if (botLidShort) {
                     cleanText = cleanText.replace(new RegExp(`@${botLidShort}`, 'g'), '').trim()
                 }
-                if (startsWithPrefix) {
-                    cleanText = cleanText.substring(prefix.length).trim()
+                if (containsKeyword) {
+                    // Remove a palavra-chave (case-insensitive) em qualquer lugar
+                    cleanText = cleanText.replace(new RegExp(keyword, 'gi'), '').trim()
                 }
                 
                 const response = await getAIResponse(cleanText || "Oi!")
