@@ -556,22 +556,23 @@ def whatsapp_send():
         except Exception as e:
             return error(f"Falha de conexão com a Meta: {str(e)}", 500)
             
-    # Lógica Microserviço (QR Code Baileys)
+      # Lógica Microserviço (QR Code Baileys)
     elif engine == 'qrcode':
+        import os
+        node_url = os.environ.get('WHATSAPP_SERVICE_URL', 'http://localhost:3001')
         try:
-            # Enviamos ao microserviço Node na porta 3001
-            # O Node deverá suportar o POST /send
+            # Enviamos ao microserviço Node
             payload = {
                 "number": number,
                 "message": message
             }
-            resp = requests.post("http://localhost:3001/send", json=payload, timeout=5)
+            resp = requests.post(f"{node_url}/send", json=payload, timeout=5)
             if resp.status_code == 200:
                 return success({"status": "Serviço QRCode completou o envio"})
             else:
                 return error(f"Erro no serviço local WhatsApp: {resp.text}", 500)
         except requests.exceptions.ConnectionError:
-            return error("O microserviço Node na porta 3001 parece estar offline ou não inicializado.", 500)
+            return error(f"O microserviço Node ({node_url}) parece estar offline ou não inicializado.", 500)
         except Exception as e:
              return error(f"Falha de gateway: {str(e)}", 500)
              
@@ -581,13 +582,31 @@ def whatsapp_send():
 @admin_bp.get("/whatsapp/status")
 @require_admin
 def whatsapp_status():
-    """Consome a porta 3001 do microserviço Node.js para relatar Status / Base64-QR"""
+    """Consome o microserviço Node.js para relatar Status / Base64-QR"""
+    import os
+    node_url = os.environ.get('WHATSAPP_SERVICE_URL', 'http://localhost:3001')
     try:
-        resp = requests.get("http://localhost:3001/status", timeout=2)
+        resp = requests.get(f"{node_url}/status", timeout=2)
         if resp.status_code == 200:
             return success(resp.json())
         return error("Falha do serviço Node.", 500)
     except requests.exceptions.ConnectionError:
          return success({"status": "offline", "qr": None, "msg": "Microserviço Offline"})
+    except Exception as e:
+         return error(f"Falha ao conectar no microserviço Node: {str(e)}", 500)
+
+@admin_bp.get("/whatsapp/groups")
+@require_admin
+def whatsapp_groups():
+    """Consome o microserviço Node.js para relatar a listagem de Grupos do WhatsApp"""
+    import os
+    node_url = os.environ.get('WHATSAPP_SERVICE_URL', 'http://localhost:3001')
+    try:
+        resp = requests.get(f"{node_url}/groups", timeout=5)
+        if resp.status_code == 200:
+            return success(resp.json())
+        return error(f"Falha do serviço Node: {resp.text}", 500)
+    except requests.exceptions.ConnectionError:
+         return error("O microserviço Node está offline.", 503)
     except Exception as e:
          return error(f"Falha ao conectar no microserviço Node: {str(e)}", 500)
