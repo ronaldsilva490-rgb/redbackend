@@ -451,54 +451,70 @@ def network_info():
 
 
 # ═══════════════════════════════════════════════════════════
-# LOGS
+# LOGS (TERMINAL LIVE + DB CLEANUP)
 # ═══════════════════════════════════════════════════════════
-
-@admin_bp.get("/logs")
-@require_admin
-def get_logs():
-    """Lista logs do sistema com filtros."""
-    nivel   = request.args.get("nivel")
-    servico = request.args.get("servico")
-    busca   = request.args.get("busca", "").strip()
-    limit   = min(int(request.args.get("limit", 100)), 500)
-    offset  = int(request.args.get("offset", 0))
-
-    sb = get_supabase_admin()
-    try:
-        q = sb.table("system_logs").select("*").order("created_at", desc=True)
-        if nivel:
-            q = q.eq("level", nivel)
-        if servico:
-            q = q.eq("service", servico)
-        if busca:
-            q = q.ilike("message", f"%{busca}%")
-
-        resp = q.limit(limit).offset(offset).execute()
-        logs = resp.data or []
-
-        total_resp = sb.table("system_logs").select("id", count="exact").execute()
-        total = total_resp.count if hasattr(total_resp, "count") else len(logs)
-
-        return success({"data": logs, "total": total, "limit": limit, "offset": offset})
-    except Exception as e:
-        msg = str(e)
-        if "system_logs" in msg and "does not exist" in msg:
-            return success({"data": [], "total": 0, "warning": "Tabela system_logs não encontrada"})
-        return error(f"Erro ao carregar logs: {msg[:120]}", 500)
-
 
 @admin_bp.delete("/logs")
 @require_admin
-def clear_logs():
-    """Remove logs antigos (mais de 30 dias)."""
+def clear_all_logs():
+    """Wipe total de logs na DB e confirma limpeza visual."""
     sb = get_supabase_admin()
     try:
-        cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
-        sb.table("system_logs").delete().lt("created_at", cutoff).execute()
-        return success(message="Logs antigos removidos")
+        # Remove TUDO da tabela de logs legada
+        sb.table("system_logs").delete().neq("id", "00000000-0000-0000-0000-000000000000").execute()
+        return success(message="Cache de logs da base de dados limpo com sucesso.")
     except Exception as e:
-        return error(f"Erro ao limpar logs: {str(e)}", 500)
+        return error(f"Erro ao limpar banco de dados: {str(e)}", 500)
+
+
+@admin_bp.get("/fly-logs")
+@require_admin
+def get_fly_logs():
+    """Busca logs reais do Fly.io via GraphQL API."""
+    if not FLY_API_TOKEN or not FLY_APP_NAME:
+        return error("FLY_API_TOKEN ou FLY_APP_NAME não configurados no backend", 500)
+
+    url = "https://api.fly.io/graphql"
+    headers = {
+        "Authorization": f"Bearer {FLY_API_TOKEN}",
+        "Content-Type": "application/json"
+    }
+    
+    # Query para buscar os últimos logs (formato simplificado para Terminal)
+    query = """
+    query($appName: String!) {
+      app(name: $appName) {
+        logs {
+          nodes {
+            timestamp
+            message
+            level
+          }
+        }
+      }
+    }
+    """
+    
+    try:
+        resp = requests.post(url, json={
+            "query": query,
+            "variables": {"appName": FLY_APP_NAME}
+        }, headers=headers, timeout=10)
+        
+        if resp.status_code != 200:
+            return error(f"Erro Fly API ({resp.status_code}): {resp.text}", 500)
+            
+        data = resp.json()
+        logs = data.get("data", {}).get("app", {}).get("logs", {}).get("nodes", [])
+        
+        # Inverte para que os mais novos fiquem embaixo (estilo terminal)
+        # Se vierem ordenados por timestamp, garantimos a ordem.
+        # Fly costuma mandar do mais novo pro antigo no 'nodes'.
+        logs.reverse() 
+        
+        return success(logs)
+    except Exception as e:
+        return error(f"Falha ao conectar na API do Fly: {str(e)}", 500)
 
 
 # ═══════════════════════════════════════════════════════════
