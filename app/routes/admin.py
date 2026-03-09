@@ -50,6 +50,9 @@ def verify_admin_token(token: str) -> dict | None:
 def require_admin(f):
     @wraps(f)
     def decorated(*args, **kwargs):
+        if request.method == "OPTIONS":
+            return jsonify({"status": "success"}), 200
+            
         auth = request.headers.get("Authorization", "")
         token = auth.replace("Bearer ", "").strip()
         if not token:
@@ -507,8 +510,8 @@ def clear_logs():
 # ═══════════════════════════════════════════════════════════
 
 @admin_bp.post("/whatsapp/send")
-@require_admin
 @cross_origin()
+@require_admin
 def whatsapp_send():
     """
     Dispara mensagens de teste utilizando a engine escolhida
@@ -582,8 +585,8 @@ def whatsapp_send():
 
 
 @admin_bp.get("/whatsapp/status")
-@require_admin
 @cross_origin()
+@require_admin
 def whatsapp_status():
     """Consome o microserviço Node.js para relatar Status / Base64-QR"""
     import os
@@ -599,8 +602,8 @@ def whatsapp_status():
          return error(f"Falha ao conectar no microserviço Node: {str(e)}", 500)
 
 @admin_bp.get("/whatsapp/groups")
-@require_admin
 @cross_origin()
+@require_admin
 def whatsapp_groups():
     """Consome o microserviço Node.js para relatar a listagem de Grupos do WhatsApp"""
     import os
