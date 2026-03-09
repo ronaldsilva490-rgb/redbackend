@@ -115,10 +115,10 @@ async function connectToWhatsApp() {
         
         const botNumber = jidDecode(sock.user.id)?.user + '@s.whatsapp.net'
         const botLid = sock.user.lid || ''
-        const botId = botNumber.split('@')[0]
-        const botLidShort = botLid.split('@')[0]
+        const botId = botNumber.split('@')[0].split(':')[0]
+        const botLidShort = botLid.split('@')[0].split(':')[0]
         
-        console.log(`🤖 Bot ID: ${botNumber} | LID: ${botLid}`)
+        console.log(`🤖 Bot ID: ${botNumber} | LID: ${botLid} | BotClean: ${botId} | LidClean: ${botLidShort}`)
 
         for (const msg of messages) {
             if (!msg.message || msg.key.fromMe) continue
