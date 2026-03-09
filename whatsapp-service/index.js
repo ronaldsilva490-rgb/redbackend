@@ -200,8 +200,8 @@ async function connectToWhatsApp(tenantId) {
                 }
                 const buffer = conversationBuffers.get(bufferKey)
                 
-                // Limpa marcações e salva no buffer
-                let textForBuffer = content.replace(/@\d+/g, '').trim()
+                // Salva no buffer (PRESERVANDO MENÇÕES para a IA correlacionar tags)
+                let textForBuffer = content.trim() 
                 if (textForBuffer.length > 2) {
                     buffer.messages.push({ author, authorJid, text: textForBuffer })
                     console.log(`[LEARN BUFFER] Mensagem de ${author} (${authorJid}) adicionada para ${remoteJid} (${buffer.messages.length}/${MAX_BUFFER_MESSAGES})`)
@@ -243,40 +243,45 @@ async function connectToWhatsApp(tenantId) {
                 // Busca Memória e Perfis (RAG Evoluído)
                 let conversationMemory = ""
                 let senderProfile = ""
+                let currentVibe = "Séria" // Default
                 
                 try {
-                    // 1. Busca resumo da conversa
+                    // 1. Busca resumo e vibe da conversa
                     const { data: convData } = await supabase.from('whatsapp_conversation_contexts')
-                        .select('summary').eq('tenant_id', tenantId).eq('conversation_id', remoteJid).single()
+                        .select('summary, vibe').eq('tenant_id', tenantId).eq('conversation_id', remoteJid).single()
+                    
                     if (convData?.summary) {
                         conversationMemory = `\n\n[CONTEXTO DA CONVERSA: ${convData.summary}]`
+                    }
+                    if (convData?.vibe) {
+                        currentVibe = convData.vibe
+                        console.log(`[RAG] 📈 Vibe detectada: "${currentVibe}"`)
                     }
 
                     // 2. Busca perfil de quem está falando agora
                     const senderJid = msg.key.participant || msg.key.remoteJid
                     const { data: profData } = await supabase.from('whatsapp_contact_profiles')
                         .select('*').eq('tenant_id', tenantId).eq('contact_id', senderJid).single()
+                    
                     if (profData) {
-                        senderProfile = `\n\n[PERFIL DO INTERLOCUTOR: Nome: ${profData.full_name || 'Desconhecido'}, Apelido: ${profData.nickname || 'Nenhum'}, Traços: ${profData.traits || 'Não identificados'}]`
-                        console.log(`[RAG] 👤 Conhecimento sobre ${senderJid} injetado (Apelido: ${profData.nickname})`)
-                    } else {
-                        console.log(`[RAG] 👤 Nenhum perfil específico para ${senderJid} ainda.`)
+                        const nicknames = profData.metadata?.nicknames || []
+                        senderProfile = `\n\n[PERFIL DO INTERLOCUTOR: Nome: ${profData.full_name || author}, Apelido Principal: ${profData.nickname || 'Nenhum'}, Todos Apelidos: ${nicknames.join(', ')}, Traços: ${profData.personality_traits || 'Não identificados'}]`
+                        console.log(`[RAG] 👤 Conhecimento sobre ${senderJid} injetado (Apelidos: ${nicknames.join(', ')})`)
                     }
                 } catch (e) { 
-                    console.error(`[RAG ERROR] Falha ao buscar dados de memória/perfil:`, e.message)
+                    console.error(`[RAG ERROR] Falha ao buscar dados:`, e.message)
                 }
 
-                const systemPrompt = session.aiConfigs?.system_prompt || "Você é um assistente virtual prestativo e descontraído."
                 const contextCombined = `${conversationMemory}${senderProfile}`
-                console.log(`[RAG] 🧩 Contexto combinado pronto (${contextCombined.length} chars)`)
+                
+                // Instrução de humor baseada na vibe
+                const vibeInstruction = `\n\n[VIBE ATUAL: ${currentVibe}. SE a vibe for descontraída ou houver intimidade, você PODE (esporadicamente) usar um dos apelidos do perfil. Se a vibe for séria ou formal, use o nome real ou seja mais educado.]`
 
                 if (tenantId === ADMIN_TENANT_ID) {
-                    // Admin: sem injeção de contexto de empresa, só prompt, memória e mensagem
-                    fullPrompt = `INSTRUÇÕES:\n${systemPrompt}${contextCombined}\n\nPERGUNTA DO CLIENTE: ${cleanText || "Oi!"}`
+                    fullPrompt = `INSTRUÇÕES:\n${systemPrompt}${contextCombined}${vibeInstruction}\n\nPERGUNTA: ${cleanText || "Oi!"}`
                 } else {
-                    // Tenant: RAG completo com contexto de empresa
                     const businessContext = await getTenantContext(tenantId)
-                    fullPrompt = `CONTEXTO DA EMPRESA:\n${businessContext}\n\nINSTRUÇÕES:\n${systemPrompt}${contextCombined}\n\nPERGUNTA DO CLIENTE: ${cleanText || "Oi!"}`
+                    fullPrompt = `CONTEXTO DA EMPRESA:\n${businessContext}\n\nINSTRUÇÕES:\n${systemPrompt}${contextCombined}${vibeInstruction}\n\nPERGUNTA: ${cleanText || "Oi!"}`
                 }
 
                 try {
@@ -300,79 +305,92 @@ async function connectToWhatsApp(tenantId) {
 
 async function learnFromConversation(tenantId, conversationId, newMessages, aiConfigs) {
     if (!aiConfigs || !aiConfigs.api_key) return
-    console.log(`[LEARN] 🧠 Analisando ${conversationId} (Tenant ${tenantId})`)
+    console.log(`[LEARN] 🧠 Analisando ${conversationId} (Tenant ${tenantId}) para Profundidade Social...`)
     
     try {
         // 1. Puxa contexto atual
         const { data: currentContext } = await supabase.from('whatsapp_conversation_contexts')
-            .select('summary').eq('tenant_id', tenantId).eq('conversation_id', conversationId).single()
+            .select('*').eq('tenant_id', tenantId).eq('conversation_id', conversationId).single()
         
-        let oldSummary = currentContext?.summary || "Nenhuma conversa gravada."
+        let oldSummary = currentContext?.summary || "Nenhuma fofoca gravada."
+        let oldVibe = currentContext?.vibe || "Desconhecida"
 
-        // 2. Transcreve mensagens (incluindo JID para aprender quem é quem)
+        // 2. Transcreve mensagens (preservando menções @id)
         let transcript = newMessages.map(m => `${m.author} (${m.authorJid}): ${m.text}`).join('\n')
 
-        // 3. Prompt de Inteligência Social (Extrai Resumo E Perfis)
-        const prompt = `Você é um Analista de Dinâmica Social. Analise as mensagens abaixo.
-RESUMO ANTERIOR DA CONVERSA: "${oldSummary}"
-NOVAS MENSAGENS:
+        // 3. Prompt de Inteligência Social Avançada
+        const prompt = `Você é um Psicólogo Social e Analista de Dados. Analise as mensagens abaixo.
+RESUMO ANTERIOR: "${oldSummary}"
+VIBE ANTERIOR: "${oldVibe}"
+
+MENSAGENS RECENTES:
 ${transcript}
 
 Sua tarefa é retornar um JSON (APENAS O JSON) com:
-1. "summary": Um novo resumo ultracompacto (max 120 palavras) unindo o antigo e o novo. Se for PV, foque no estágio da conversa. Se for grupo, foque nos tópicos.
-2. "profiles": Uma lista de objetos { "jid": string, "nickname": string, "traits": string, "full_name": string } para cada pessoa que você conseguir identificar um apelido ou traço de personalidade agora. Se não identificar nada novo de alguém, não inclua no JSON.
+1. "summary": Um novo resumo ultracompacto unindo o antigo e o novo.
+2. "vibe": O humor atual (ex: "Descontraído", "Zoeira", "Sério", "Tenso", "Gargalhadas").
+3. "profiles": Uma lista de objetos { "jid": string, "full_name": string, "nicknames": [string], "traits": string, "context_note": string }. 
+   - IMPORTANTE: Se o autor marcou alguém (@id) e chamou de algo, o apelido é do marcado!
+   - Se o autor falou de si mesmo, o traço é dele.
+   - Identifique nomes de exibição e associe aos JIDs.
 
-Retorne APENAS o JSON no formato: { "summary": "...", "profiles": [...] }`
+Retorne APENAS o JSON puro: { "summary": "...", "vibe": "...", "profiles": [...] }`
 
-        const aiResponse = await getAIResponse(prompt, aiConfigs, "Você é um analista técnico de dados. Responda apenas com JSON puro.")
+        const aiResponse = await getAIResponse(prompt, aiConfigs, "Você é um analista de comportamento social. Responda apenas com JSON puro.")
         
         if (aiResponse) {
             try {
-                // Limpa possíveis marcações de markdown do JSON
                 const cleanJson = aiResponse.replace(/```json|```/g, '').trim()
                 const result = JSON.parse(cleanJson)
 
-                // 4. Salva Resumo da Conversa
-                if (result.summary) {
+                // 4. Salva Resumo e Vibe
+                if (result.summary || result.vibe) {
+                    console.log(`[LEARN] 📈 Vibe detectada: "${result.vibe}"`)
                     await supabase.from('whatsapp_conversation_contexts').upsert({
                         tenant_id: tenantId,
                         conversation_id: conversationId,
-                        summary: result.summary,
+                        summary: result.summary || oldSummary,
+                        vibe: result.vibe || oldVibe,
                         updated_at: new Date()
                     }, { onConflict: 'tenant_id, conversation_id' })
-                    console.log(`[LEARN] ✅ Resumo da conversa ${conversationId} atualizado.`)
                 }
 
-                // 5. Salva Perfis dos Contatos
+                // 5. Salva Perfis dos Contatos com Metadados
                 if (result.profiles && Array.isArray(result.profiles)) {
-                    console.log(`[LEARN] 👥 Identificados ${result.profiles.length} perfis para atualizar...`)
+                    console.log(`[LEARN] 👥 Identificados ${result.profiles.length} perfis profundos...`)
                     for (const profile of result.profiles) {
                         if (profile.jid) {
-                            console.log(`[LEARN] 🔄 Atualizando perfil de ${profile.jid} (Apelido: ${profile.nickname})`)
+                            // Busca o perfil atual pra não sobrescrever metadados velhos (deep merge)
+                            const { data: existing } = await supabase.from('whatsapp_contact_profiles')
+                                .select('metadata').eq('tenant_id', tenantId).eq('contact_id', profile.jid).single()
+                            
+                            let meta = existing?.metadata || {}
+                            if (!meta.nicknames) meta.nicknames = []
+                            
+                            // Adiciona novos apelidos sem repetir
+                            if (profile.nicknames) {
+                                profile.nicknames.forEach(n => {
+                                    if (n && !meta.nicknames.includes(n)) meta.nicknames.push(n)
+                                })
+                            }
+                            if (profile.context_note) meta.context_note = profile.context_note
+
+                            console.log(`[LEARN] 🔄 Evoluindo perfil de ${profile.jid} (Apelidos: ${meta.nicknames.join(', ')})`)
                             await supabase.from('whatsapp_contact_profiles').upsert({
                                 tenant_id: tenantId,
                                 contact_id: profile.jid,
                                 full_name: profile.full_name || null,
-                                nickname: profile.nickname || null,
-                                traits: profile.traits || null,
+                                nickname: meta.nicknames[0] || null, // Principal
+                                personality_traits: profile.traits || null,
+                                metadata: meta,
                                 updated_at: new Date()
                             }, { onConflict: 'tenant_id, contact_id' })
                         }
                     }
-                    console.log(`[LEARN] ✅ Todos os perfis de contatos foram processados.`)
                 }
+                console.log(`[LEARN] ✅ Aprendizado social concluído para ${conversationId}`)
             } catch (jsonErr) {
-                console.warn(`[LEARN] ⚠️ Erro ao processar JSON da IA:`, jsonErr.message)
-                console.log(`[LEARN] Resposta bruta que causou erro:`, aiResponse)
-                // Fallback: se o JSON falhou mas temos texto, tenta salvar como resumo simples
-                if (aiResponse.length > 10 && aiResponse.length < 500) {
-                     await supabase.from('whatsapp_conversation_contexts').upsert({
-                        tenant_id: tenantId,
-                        conversation_id: conversationId,
-                        summary: aiResponse.trim(),
-                        updated_at: new Date()
-                    }, { onConflict: 'tenant_id, conversation_id' })
-                }
+                console.warn(`[LEARN] ⚠️ Erro no JSON de aprendizado:`, jsonErr.message)
             }
         }
     } catch (err) {
