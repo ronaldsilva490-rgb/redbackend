@@ -28,7 +28,7 @@ const sessions = new Map()
 // ── Memória Contínua em RAM (Rolling Summary) ──
 // Map: group_id -> { tenantId, messages: [ { author, text } ] }
 const groupMessageBuffers = new Map()
-const MAX_BUFFER_MESSAGES = 15
+const MAX_BUFFER_MESSAGES = 5 // Reduzido para 5 para facilitar testes imediatos
 
 // ── Prevenção de crash silencioso do processo Node ──
 process.on('uncaughtException', (err) => {
@@ -197,10 +197,12 @@ async function connectToWhatsApp(tenantId) {
                 let textForBuffer = content.replace(/@\d+/g, '').trim()
                 if (textForBuffer.length > 2) {
                     buffer.messages.push({ author, text: textForBuffer })
+                    console.log(`[BUFFER] Mensagem adicionada ao buffer do grupo ${remoteJid} (${buffer.messages.length}/${MAX_BUFFER_MESSAGES})`)
                 }
 
                 // Gatilho: Se atingiu o limite, dispara sumarização silenciosa background
                 if (buffer.messages.length >= MAX_BUFFER_MESSAGES) {
+                    console.log(`[BUFFER] 🚀 Limite atingido para ${remoteJid}. Disparando sumarização...`)
                     const messagesToSummarize = [...buffer.messages]
                     buffer.messages = [] // Limpa a RAM imediatamente
                     // Executa a função sem dar await, não bloqueia o fluxo de mensagens
@@ -239,10 +241,20 @@ async function connectToWhatsApp(tenantId) {
                 let groupMemory = ""
                 if (isGroup) {
                     try {
-                        const { data: mem } = await supabase.from('whatsapp_group_contexts')
+                        const { data: mem, error: memErr } = await supabase.from('whatsapp_group_contexts')
                             .select('summary').eq('tenant_id', tenantId).eq('group_id', remoteJid).single()
-                        if (mem?.summary) groupMemory = `\n\n[MEMÓRIA DO GRUPO (Resumo das últimas conversas): ${mem.summary}]`
-                    } catch (e) { /* ignore se não houver memória */ }
+                        
+                        if (memErr && memErr.code !== 'PGRST116') {
+                            console.error(`[QUERY MEMORY] Erro ao buscar memória do grupo:`, memErr.message)
+                        }
+
+                        if (mem?.summary) {
+                            console.log(`[QUERY MEMORY] ✅ Memória encontrada para ${remoteJid}: "${mem.summary.substring(0, 30)}..."`)
+                            groupMemory = `\n\n[MEMÓRIA DO GRUPO (Resumo das últimas conversas): ${mem.summary}]`
+                        } else {
+                            console.log(`[QUERY MEMORY] ℹ️ Nenhuma memória salva ainda para o grupo ${remoteJid}`)
+                        }
+                    } catch (e) { /* ignore */ }
                 }
 
                 if (tenantId === ADMIN_TENANT_ID) {
@@ -274,18 +286,26 @@ async function connectToWhatsApp(tenantId) {
 // ── Funções de IA (Adaptadas para Multi-Tenant) ──
 
 async function summarizeGroupContext(tenantId, groupId, newMessages, aiConfigs) {
-    if (!aiConfigs || !aiConfigs.api_key) return
-    console.log(`[RAG BG] 🧠 Iniciando sumarização silently para o grupo ${groupId} (Tenant ${tenantId})`)
+    if (!aiConfigs || !aiConfigs.api_key) {
+        console.error(`[RAG BG] ❌ Erro: API Key não configurada para Tenant ${tenantId}. Abortando sumarização.`)
+        return
+    }
+    console.log(`[RAG BG] 🧠 Iniciando sumarização para o grupo ${groupId} (Tenant ${tenantId})`)
     
     try {
         // 1. Puxa contexto atual
-        const { data: currentContext } = await supabase.from('whatsapp_group_contexts')
+        const { data: currentContext, error: fetchErr } = await supabase.from('whatsapp_group_contexts')
             .select('summary').eq('tenant_id', tenantId).eq('group_id', groupId).single()
+        
+        if (fetchErr && fetchErr.code !== 'PGRST116') {
+            console.error(`[RAG BG] Erro ao buscar resumo atual do DB:`, fetchErr.message)
+        }
         
         let oldSummary = currentContext?.summary || "Nenhuma conversa gravada."
 
         // 2. Transcreve mensagens
         let transcript = newMessages.map(m => `${m.author}: ${m.text}`).join('\n')
+        console.log(`[RAG BG] Mensagens para sumarizar:\n${transcript}`)
 
         // 3. Monta prompt super compactador
         const prompt = `Você é um agente analisador de contexto silencioso.
@@ -299,9 +319,11 @@ Sua tarefa: Reescreva o RESUMO. Mantenha os tópicos cruciais do resumo antigo e
 Não saude, não explique nada, retorne APENAS O TEXTO DE RESUMO puro.`
 
         // 4. Bate na IA
-        const newSummary = await getAIResponse(prompt, aiConfigs, true) // flag true pra forçar algo se necessário, depende da implementação getAIResponse, vamos usar o padrão
+        console.log(`[RAG BG] Solicitando novo resumo à IA (${aiConfigs.ai_provider})...`)
+        const newSummary = await getAIResponse(prompt, aiConfigs, true)
         
-        if (newSummary && newSummary.length > 5 && newSummary.length < 2000) {
+        if (newSummary && newSummary.length > 5) {
+            console.log(`[RAG BG] Novo resumo gerado: "${newSummary.substring(0, 50)}..."`)
             // 5. Salva no banco (Upsert)
             const { error: dbErr } = await supabase.from('whatsapp_group_contexts').upsert({
                 tenant_id: tenantId,
@@ -310,11 +332,17 @@ Não saude, não explique nada, retorne APENAS O TEXTO DE RESUMO puro.`
                 updated_at: new Date()
             }, { onConflict: 'tenant_id, group_id' })
             
-            if (dbErr) console.error(`[RAG BG] Erro ao gravar upsert no supabase:`, dbErr?.message)
-            else console.log(`[RAG BG] ✅ Resumo de grupo atualizado! Tópicos: "${newSummary.substring(0,40)}..."`)
+            if (dbErr) {
+                console.error(`[RAG BG] ❌ Erro ao gravar no Supabase:`, dbErr.message)
+                console.error(`[RAG BG] Detalhes do erro:`, JSON.stringify(dbErr))
+            } else {
+                console.log(`[RAG BG] ✅ Sucesso! Resumo persistido no banco para o grupo ${groupId}`)
+            }
+        } else {
+            console.warn(`[RAG BG] ⚠️ Resumo retornado pela IA é inválido ou muito curto.`)
         }
     } catch (err) {
-        console.error(`[RAG BG] ❌ Falha na geração do Rolling Summary para Tenant ${tenantId}:`, err?.message)
+        console.error(`[RAG BG] ❌ Falha crítica na sumarização:`, err)
     }
 }
 
