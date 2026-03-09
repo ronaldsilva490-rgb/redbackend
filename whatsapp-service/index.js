@@ -6,6 +6,8 @@ const { GoogleGenerativeAI } = require('@google/generative-ai')
 const { createClient } = require('@supabase/supabase-js')
 const QRCode = require('qrcode')
 const pino = require('pino')
+const path = require('path')
+const fs = require('fs')
 
 const app = express()
 app.use(cors())

@@ -18,7 +18,7 @@ def get_tenant_ai_config():
     sb = get_supabase_admin()
     resp = sb.table("whatsapp_tenant_configs").select("*").eq("tenant_id", request.tenant_id).maybe_single().execute()
     
-    if not resp.data:
+    if not resp or not resp.data:
         # Retorna valores padrão se não existir
         return success({
             "ai_enabled": False,
@@ -54,7 +54,7 @@ def save_tenant_ai_config():
     sb = get_supabase_admin()
     resp = sb.table("whatsapp_tenant_configs").upsert(payload).execute()
     
-    if not resp.data:
+    if not resp or not resp.data:
         return error("Erro ao salvar configurações de IA")
     
     # Notifica o microserviço para recarregar as configs
