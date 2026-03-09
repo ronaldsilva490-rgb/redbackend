@@ -180,21 +180,44 @@ async function connectToWhatsApp(tenantId) {
 
 async function loadTenantAIConfigs(tenantId) {
     try {
-        const { data, error } = await supabase.from('whatsapp_tenant_configs').select('*').eq('tenant_id', tenantId).maybe_single()
-        if (error) throw error
-        
-        const session = sessions.get(tenantId)
-        if (session) {
-            // Mapeia as chaves do banco de dados para o formato esperado
-            session.aiConfigs = {
+        let configData = {}
+
+        if (tenantId === 'admin') {
+            // Admin usa a tabela legada 'ai_configs' (key, value)
+            const { data, error } = await supabase.from('ai_configs').select('*')
+            if (error) throw error
+            
+            const configs = {}
+            if (data) data.forEach(item => configs[item.key] = item.value)
+            
+            const provider = configs.ai_provider || 'gemini'
+            configData = {
+                ai_provider: provider,
+                api_key: configs[`${provider}_api_key`] || "",
+                model: configs[`${provider}_model`] || "",
+                system_prompt: configs[`${provider}_system_prompt`] || "Você é o assistente virtual da Red Comercial.",
+                ai_prefix: configs.ai_prefix || "",
+                ai_bot_enabled: configs.ai_bot_enabled === 'true'
+            }
+        } else {
+            // Tenants usam a nova tabela 'whatsapp_tenant_configs'
+            const { data, error } = await supabase.from('whatsapp_tenant_configs').select('*').eq('tenant_id', tenantId).maybe_single()
+            if (error) throw error
+            
+            configData = {
                 ai_provider: data?.ai_provider || 'gemini',
                 api_key: data?.api_key || "",
                 model: data?.model || "",
-                system_prompt: data?.system_prompt || "Você é o assistente virtual da Red Comercial. Responda de forma prestativa e descontraída.",
+                system_prompt: data?.system_prompt || "Você é o assistente virtual da Red Comercial.",
                 ai_prefix: data?.ai_prefix || "",
-                ai_bot_enabled: data?.ai_bot_enabled === true // Garante que é booleano
+                ai_bot_enabled: data?.ai_bot_enabled === true
             }
-            console.log(`✅ Configurações de IA carregadas para Tenant ${tenantId}. Provedor: ${session.aiConfigs.ai_provider}`)
+        }
+        
+        const session = sessions.get(tenantId)
+        if (session) {
+            session.aiConfigs = configData
+            console.log(`✅ Configurações de IA carregadas para Tenant ${tenantId}. Provedor: ${configData.ai_provider}`)
         }
     } catch (err) {
         console.error(`Erro ao carregar configs de IA para Tenant ${tenantId}:`, err)
@@ -300,6 +323,14 @@ async function getAIResponse(text, configs) {
 }
 
 // ── Endpoints da API ──
+
+// Aliases para o Admin (Legacy/Global support)
+app.get('/status', (req, res) => res.redirect('/status/admin'))
+app.post('/start', (req, res) => res.redirect(307, '/start/admin'))
+app.post('/stop', (req, res) => res.redirect(307, '/stop/admin'))
+app.get('/groups', (req, res) => res.redirect('/groups/admin'))
+app.post('/send', (req, res) => res.redirect(307, '/send/admin'))
+app.post('/ai/reload', (req, res) => res.redirect(307, '/ai/reload/admin'))
 
 app.get('/status/:tenantId', (req, res) => {
     const { tenantId } = req.params
