@@ -308,19 +308,16 @@ async function summarizeGroupContext(tenantId, groupId, newMessages, aiConfigs) 
         console.log(`[RAG BG] Mensagens para sumarizar:\n${transcript}`)
 
         // 3. Monta prompt super compactador
-        const prompt = `Você é um agente analisador de contexto silencioso.
-RESUMO ANTIGO DO GRUPO:
-"${oldSummary}"
-
-NOVAS MENSAGENS NESTE EXATO MOMENTO:
+        const prompt = `NOVAS MENSAGENS NESTE EXATO MOMENTO:
 ${transcript}
 
-Sua tarefa: Reescreva o RESUMO. Mantenha os tópicos cruciais do resumo antigo e insira os novos assuntos falados agora. Remova informações velhas que não importam mais. Seja ultracompacto (máximo de 120 palavras). Foque apenas no que foi discutido e qual é o assunto atual.
-Não saude, não explique nada, retorne APENAS O TEXTO DE RESUMO puro.`
+Sua tarefa: Reescreva o RESUMO ATUAL do grupo. Mantenha os tópicos cruciais do resumo antigo e insira os novos assuntos falados agora. Remova informações velhas que não importam mais. Seja ultracompacto (máximo de 120 palavras). Foque apenas no que foi discutido e qual é o assunto atual.
+RESUMO ANTIGO PARA REFERÊNCIA: "${oldSummary}"`
 
-        // 4. Bate na IA
+        // 4. Bate na IA (com prompt de sistema neutro para não misturar com a personalidade do bot)
         console.log(`[RAG BG] Solicitando novo resumo à IA (${aiConfigs.ai_provider})...`)
-        const newSummary = await getAIResponse(prompt, aiConfigs, true)
+        const summarizerSystemPrompt = "Você é um analisador de logs e conversas. Seu objetivo é criar resumos técnicos e compactos de tópicos discutidos, sem saudações ou comentários."
+        const newSummary = await getAIResponse(prompt, aiConfigs, summarizerSystemPrompt)
         
         if (newSummary && newSummary.length > 5) {
             console.log(`[RAG BG] Novo resumo gerado: "${newSummary.substring(0, 50)}..."`)
@@ -433,8 +430,10 @@ async function getTenantContext(tenantId) {
     }
 }
 
-async function getAIResponse(text, configs) {
+async function getAIResponse(text, configs, overrideSystemPrompt = null) {
     const provider = configs.ai_provider || 'gemini'
+    const systemPrompt = overrideSystemPrompt || configs.system_prompt || "Você é um assistente virtual prestativo."
+    
     try {
         if (!configs.api_key || !configs.model) {
             console.warn(`IA (Tenant): API Key ou Modelo não configurado para o provedor ${provider}.`)
@@ -445,12 +444,12 @@ async function getAIResponse(text, configs) {
             const genAI = new GoogleGenerativeAI(configs.api_key)
             const model = genAI.getGenerativeModel({
                 model: configs.model,
-                systemInstruction: configs.system_prompt // Gemini SDK aceita systemInstruction
+                systemInstruction: systemPrompt // Usa o override ou o padrão do banco
             })
             const result = await model.generateContent(text)
             return result.response.text()
-        }
-
+        } 
+        
         // Lógica para Groq e OpenRouter via Fetch (OpenAI Compatible)
         let apiUrl = ""
         if (provider === 'groq') {
@@ -464,15 +463,15 @@ async function getAIResponse(text, configs) {
         const response = await fetch(apiUrl, {
             method: 'POST',
             headers: {
-                'Content-Type': 'application/json',
                 'Authorization': `Bearer ${configs.api_key}`,
-                'HTTP-Referer': 'https://redcomercial.com.br', // Recomendado pelo OpenRouter
-                'X-Title': 'Red Comercial Bot'
+                'Content-Type': 'application/json',
+                'HTTP-Referer': 'https://redcomercial.com.br',
+                'X-Title': 'Red Comercial AI'
             },
             body: JSON.stringify({
                 model: configs.model,
                 messages: [
-                    { role: "system", content: configs.system_prompt },
+                    { role: "system", content: systemPrompt },
                     { role: "user", content: text }
                 ]
             })
