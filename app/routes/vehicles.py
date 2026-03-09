@@ -157,3 +157,25 @@ def update_status(vehicle_id):
     if not resp.data:
         return error("Veículo não encontrado", 404)
     return success(resp.data[0], f"Status: {status}")
+@vehicles_bp.get("/<vehicle_id>/costs")
+@require_auth
+def get_vehicle_costs(vehicle_id):
+    resp = get_supabase_admin().table("vehicle_costs")\
+        .select("*").eq("vehicle_id", vehicle_id).eq("tenant_id", request.tenant_id).execute()
+    return success(resp.data)
+
+@vehicles_bp.post("/<vehicle_id>/costs")
+@require_auth
+def add_vehicle_cost(vehicle_id):
+    body = request.get_json() or {}
+    body["vehicle_id"] = vehicle_id
+    body["tenant_id"] = request.tenant_id
+    
+    if not body.get("descricao") or not body.get("valor"):
+        return error("Descrição e valor são obrigatórios")
+        
+    try:
+        resp = get_supabase_admin().table("vehicle_costs").insert(body).execute()
+        return success(resp.data[0], "Custo registrado", 201)
+    except Exception as e:
+        return error(f"Erro: {str(e)}", 500)

@@ -451,8 +451,29 @@ def network_info():
 
 
 # ═══════════════════════════════════════════════════════════
-# LOGS (TERMINAL LIVE + DB CLEANUP)
+# LOGS (DATABASE + FALLBACK FLY.IO)
 # ═══════════════════════════════════════════════════════════
+
+@admin_bp.get("/logs")
+@require_admin
+def get_logs():
+    """Lista logs salvos no banco de dados Supabase."""
+    nivel   = request.args.get("nivel")
+    servico = request.args.get("servico")
+    busca   = request.args.get("busca", "").strip()
+    limit   = min(int(request.args.get("limit", 100)), 500)
+    
+    sb = get_supabase_admin()
+    try:
+        q = sb.table("system_logs").select("*").order("created_at", desc=True)
+        if nivel:   q = q.eq("level", nivel)
+        if servico: q = q.eq("service", servico)
+        if busca:   q = q.ilike("message", f"%{busca}%")
+        
+        resp = q.limit(limit).execute()
+        return success({"data": resp.data or [], "total": len(resp.data or [])})
+    except Exception as e:
+        return error(f"Erro ao carregar logs do banco: {str(e)}", 500)
 
 @admin_bp.delete("/logs")
 @require_admin

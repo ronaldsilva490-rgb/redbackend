@@ -48,6 +48,7 @@ def create_app():
     from .routes.business      import business_bp
     from .routes.hotel         import hotel_bp
     from .routes.tenant_ai     import tenant_ai_bp
+    from .routes.leads         import leads_bp
 
     app.register_blueprint(auth_bp,        url_prefix="/api/auth")
     app.register_blueprint(admin_bp,       url_prefix="/api/admin")
@@ -70,6 +71,7 @@ def create_app():
     app.register_blueprint(business_bp,    url_prefix="/api/business")
     app.register_blueprint(hotel_bp,       url_prefix="/api/hotel")
     app.register_blueprint(tenant_ai_bp,   url_prefix="/api/tenant-ai")
+    app.register_blueprint(leads_bp,       url_prefix="/api/leads")
 
     @app.get("/")
     @cross_origin()
