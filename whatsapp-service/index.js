@@ -1,7 +1,7 @@
 require('dotenv').config()
 const express = require('express')
 const cors = require('cors')
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, makeInMemoryStore, jidDecode } = require('@whiskeysockets/baileys')
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, makeInMemoryStore, jidDecode, Browsers } = require('@whiskeysockets/baileys')
 const { GoogleGenerativeAI } = require('@google/generative-ai')
 const { createClient } = require('@supabase/supabase-js')
 const QRCode = require('qrcode')
@@ -32,7 +32,7 @@ let aiModel = null
 
 async function loadAIConfigs() {
     try {
-        const { data, error } = await supabase.table('ai_configs').select('*')
+        const { data, error } = await supabase.from('ai_configs').select('*')
         if (!error && data) {
             data.forEach(item => {
                 aiConfigs[item.key] = item.value
