@@ -114,6 +114,7 @@ async function connectToWhatsApp() {
         if (type !== 'notify') return
         
         const botNumber = jidDecode(sock.user.id)?.user + '@s.whatsapp.net'
+        console.log(`🤖 Bot ID: ${botNumber}`)
 
         for (const msg of messages) {
             if (!msg.message || msg.key.fromMe) continue
@@ -130,15 +131,20 @@ async function connectToWhatsApp() {
             
             // Lógica de Mentions/Replies em Grupos
             const contextInfo = msg.message[messageType]?.contextInfo
-            const isMentioned = contextInfo?.mentionedJid?.some(jid => jid.startsWith(botNumber.split('@')[0]))
-            const isReplyToMe = contextInfo?.participant?.startsWith(botNumber.split('@')[0])
+            const isMentioned = contextInfo?.mentionedJid?.some(jid => jid.includes(botNumber.split('@')[0]))
+            const isReplyToMe = contextInfo?.participant?.includes(botNumber.split('@')[0])
             
+            if (isGroup) {
+                console.log(`📩 Mensagem em Grupo (${remoteJid}): Mentions: ${contextInfo?.mentionedJid || 'nulo'}, isMentioned: ${isMentioned}, isReplyToMe: ${isReplyToMe}`)
+            }
+
             // Responde se: 1. Bot Ativo | 2. PV | 3. Grupo + Menção | 4. Grupo + Resposta ao Bot
             if (aiConfigs.ai_bot_enabled === 'true' && (!isGroup || isMentioned || isReplyToMe)) {
                 console.log(`🤖 IA: Processando mensagem de ${remoteJid}`)
                 
-                // Limpa menção do texto
-                const cleanText = text.replace(new RegExp(`@${botNumber.split('@')[0]}`, 'g'), '').trim()
+                // Limpa menção do texto (considerando vários formatos)
+                const botCleanId = botNumber.split('@')[0]
+                const cleanText = text.replace(new RegExp(`@${botCleanId}`, 'g'), '').trim()
                 
                 const response = await getGeminiResponse(cleanText || "Oi!")
                 if (response) {
