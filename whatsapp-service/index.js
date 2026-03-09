@@ -37,17 +37,17 @@ process.on('unhandledRejection', (reason) => {
 async function connectToWhatsApp(tenantId) {
     console.log(`[STEP 1/6] 📡 connectToWhatsApp chamado para Tenant: ${tenantId}`)
     const authPath = path.join(__dirname, `auth_info_baileys/tenant_${tenantId}`)
-    
+
     console.log(`[STEP 2/6] 📁 authPath = ${authPath} | existe: ${fs.existsSync(authPath)}`)
     if (!fs.existsSync(authPath)) {
         fs.mkdirSync(authPath, { recursive: true })
         console.log(`[STEP 2/6] ✅ Diretório criado.`)
     }
-    
+
     console.log(`[STEP 3/6] 🔑 Carregando useMultiFileAuthState...`)
     const { state, saveCreds } = await useMultiFileAuthState(authPath)
     console.log(`[STEP 3/6] ✅ Auth state carregado. Registrado: ${!!state?.creds?.registered}`)
-    
+
     console.log(`[STEP 4/6] 🌐 Buscando versão do Baileys...`)
     const { version, isLatest } = await fetchLatestBaileysVersion()
     console.log(`[STEP 4/6] ✅ Versão: ${version.join('.')} | isLatest: ${isLatest}`)
@@ -72,20 +72,20 @@ async function connectToWhatsApp(tenantId) {
     sock.ev.on('connection.update', async (update) => {
         const { connection, lastDisconnect, qr } = update
         console.log(`[CONNECTION.UPDATE] Tenant: ${tenantId} | connection: ${connection} | qr: ${!!qr} | statusCode: ${(lastDisconnect?.error)?.output?.statusCode}`)
-        
+
         if (qr) {
             console.log(`[QR] Gerando base64 do QR para Tenant: ${tenantId}...`)
             session.lastQr = await QRCode.toDataURL(qr)
             session.status = 'qrcode'
             console.log(`[QR] ✅ QR Code gerado com sucesso para Tenant: ${tenantId}`)
             try {
-                await supabase.from('whatsapp_sessions').upsert({ 
-                    tenant_id: tenantId, 
-                    status: 'qrcode', 
+                await supabase.from('whatsapp_sessions').upsert({
+                    tenant_id: tenantId,
+                    status: 'qrcode',
                     qr: session.lastQr,
-                    updated_at: new Date() 
+                    updated_at: new Date()
                 }, { onConflict: 'tenant_id' })
-            } catch (_) {} // silencia erros de FK para tenants não cadastrados
+            } catch (_) { } // silencia erros de FK para tenants não cadastrados
         }
 
         if (connection === 'close') {
@@ -97,13 +97,13 @@ async function connectToWhatsApp(tenantId) {
             if (statusCode === DisconnectReason.loggedOut) {
                 console.log(`🚫 Tenant ${tenantId} deslogado. Limpando...`)
                 sessions.delete(tenantId)
-                try { await supabase.from('whatsapp_sessions').delete().eq('tenant_id', tenantId) } catch (_) {}
+                try { await supabase.from('whatsapp_sessions').delete().eq('tenant_id', tenantId) } catch (_) { }
                 if (fs.existsSync(authPath)) fs.rmSync(authPath, { recursive: true, force: true })
 
             } else if (statusCode === 428) {
                 console.log(`⚠️ Tenant ${tenantId}: auth corrompida (428). Reiniciando fresh...`)
                 sessions.delete(tenantId)
-                try { await supabase.from('whatsapp_sessions').delete().eq('tenant_id', tenantId) } catch (_) {}
+                try { await supabase.from('whatsapp_sessions').delete().eq('tenant_id', tenantId) } catch (_) { }
                 if (fs.existsSync(authPath)) fs.rmSync(authPath, { recursive: true, force: true })
                 setTimeout(() => connectToWhatsApp(tenantId), 2000)
 
@@ -116,14 +116,14 @@ async function connectToWhatsApp(tenantId) {
             session.status = 'authenticated'
             session.lastQr = null
             try {
-                await supabase.from('whatsapp_sessions').upsert({ 
-                    tenant_id: tenantId, 
-                    status: 'authenticated', 
+                await supabase.from('whatsapp_sessions').upsert({
+                    tenant_id: tenantId,
+                    status: 'authenticated',
                     phone: sock.user.id,
                     qr: null,
-                    updated_at: new Date() 
+                    updated_at: new Date()
                 }, { onConflict: 'tenant_id' })
-            } catch (_) {} // silencia erros de FK para tenants não cadastrados
+            } catch (_) { } // silencia erros de FK para tenants não cadastrados
         }
     })
 
@@ -132,12 +132,12 @@ async function connectToWhatsApp(tenantId) {
     // ── Listener de Mensagens (IA Bot Multi-Tenant) ──
     sock.ev.on('messages.upsert', async ({ messages, type }) => {
         if (type !== 'notify') return
-        
+
         const botNumber = jidDecode(sock.user.id)?.user + '@s.whatsapp.net'
         const botLid = sock.user.lid || ''
         const botId = botNumber.split('@')[0].split(':')[0]
         const botLidShort = botLid.split('@')[0].split(':')[0]
-        
+
         console.log(`🤖 Bot ID (Tenant ${tenantId}): ${botNumber} | LID: ${botLid}`)
 
         for (const msg of messages) {
@@ -145,7 +145,7 @@ async function connectToWhatsApp(tenantId) {
 
             const remoteJid = msg.key.remoteJid
             const isGroup = remoteJid.endsWith('@g.us')
-            
+
             // Extração de Conteúdo (Suporta Ephemeral, ViewOnce, etc)
             const msgType = Object.keys(msg.message)[0]
             let content = ""
@@ -157,20 +157,20 @@ async function connectToWhatsApp(tenantId) {
             else if (msg.message[msgType]?.caption) content = msg.message[msgType].caption
 
             // Resiliência para contextInfo
-            const contextInfo = msg.message?.extendedTextMessage?.contextInfo || 
-                              msg.message?.imageMessage?.contextInfo || 
-                              msg.message?.videoMessage?.contextInfo ||
-                              msg.message?.ephemeralMessage?.message?.extendedTextMessage?.contextInfo ||
-                              msg.message?.viewOnceMessage?.message?.imageMessage?.contextInfo ||
-                              msg.message?.viewOnceMessage?.message?.videoMessage?.contextInfo ||
-                              msg.message?.viewOnceMessageV2?.message?.imageMessage?.contextInfo ||
-                              msg.message?.viewOnceMessageV2?.message?.videoMessage?.contextInfo
+            const contextInfo = msg.message?.extendedTextMessage?.contextInfo ||
+                msg.message?.imageMessage?.contextInfo ||
+                msg.message?.videoMessage?.contextInfo ||
+                msg.message?.ephemeralMessage?.message?.extendedTextMessage?.contextInfo ||
+                msg.message?.viewOnceMessage?.message?.imageMessage?.contextInfo ||
+                msg.message?.viewOnceMessage?.message?.videoMessage?.contextInfo ||
+                msg.message?.viewOnceMessageV2?.message?.imageMessage?.contextInfo ||
+                msg.message?.viewOnceMessageV2?.message?.videoMessage?.contextInfo
 
-            const isMentioned = !!contextInfo?.mentionedJid?.some(jid => 
+            const isMentioned = !!contextInfo?.mentionedJid?.some(jid =>
                 jid.includes(botId) || (botLidShort && jid.includes(botLidShort))
             )
             const isReplyToMe = !!(contextInfo?.participant?.includes(botId) || (botLidShort && contextInfo?.participant?.includes(botLidShort)))
-            
+
             // Verificação de Palavra-Chave (ai_prefix agora é tenant-specific)
             const keyword = session.aiConfigs?.ai_prefix?.trim() || ""
             const normalizeText = (text) => text ? text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase() : ""
@@ -179,14 +179,14 @@ async function connectToWhatsApp(tenantId) {
             const containsKeyword = Boolean(normKeyword && normContent.includes(normKeyword))
 
             if (isGroup) {
-                console.log(`📩 [DEBUG GRUPO - Tenant ${tenantId}] text: "${content.substring(0,30)}..."`)
+                console.log(`📩 [DEBUG GRUPO - Tenant ${tenantId}] text: "${content.substring(0, 30)}..."`)
                 console.log(`   - isMentioned: ${isMentioned}, isReplyToMe: ${isReplyToMe}, containsKeyword: ${containsKeyword}, keywordSetada: "${keyword}"`)
             }
 
             // Responde se: Ativo + (PV ou Menção ou Resposta ou Keyword)
             if (session.aiConfigs?.ai_bot_enabled === true && (!isGroup || isMentioned || isReplyToMe || containsKeyword)) {
                 console.log(`🤖 IA (Tenant ${tenantId}): Processando mensagem de ${remoteJid}`)
-                
+
                 // Limpa JID, LID e Palavra-Chave do texto
                 let cleanText = content.replace(new RegExp(`@${botId}`, 'g'), '').trim()
                 if (botLidShort) {
@@ -232,13 +232,13 @@ async function loadTenantAIConfigs(tenantId) {
             const { data, error } = await supabase.from('ai_configs').select('*')
             const configs = {}
             if (!error && data) data.forEach(item => configs[item.key] = item.value)
-            
+
             const provider = configs.ai_provider || 'gemini'
             configData = {
                 ai_provider: provider,
                 api_key: configs[`${provider}_api_key`] || process.env.GEMINI_API_KEY || '',
                 model: configs[`${provider}_model`] || 'gemini-1.5-flash',
-                system_prompt: configs[`${provider}_system_prompt`] || 'Você é o assistente virtual da Red Comercial.',
+                system_prompt: configs[`${provider}_system_prompt`] || 'Você é o assistente RED.IA, da RED Corporation.',
                 ai_prefix: configs.ai_prefix || '',
                 ai_bot_enabled: configs.ai_bot_enabled === 'true'
             }
@@ -247,7 +247,7 @@ async function loadTenantAIConfigs(tenantId) {
             const { data: tenantDataArray, error } = await supabase.from('whatsapp_tenant_configs').select('*').eq('tenant_id', tenantId).limit(1)
             if (error) throw error
             const data = tenantDataArray && tenantDataArray.length > 0 ? tenantDataArray[0] : null
-            
+
             configData = {
                 ai_provider: data?.ai_provider || 'gemini',
                 api_key: data?.api_key || '',
@@ -257,7 +257,7 @@ async function loadTenantAIConfigs(tenantId) {
                 ai_bot_enabled: data?.ai_enabled === true
             }
         }
-        
+
         const session = sessions.get(tenantId)
         if (session) {
             session.aiConfigs = configData
@@ -284,7 +284,7 @@ async function getTenantContext(tenantId) {
         // Busca dados básicos do tenant
         const { data: tenant, error: tenantError } = await supabase.from('tenants').select('nome, descricao, tipo, endereco, cidade').eq('id', tenantId).single()
         if (tenantError) throw tenantError
-        
+
         // Busca produtos/cardápio/serviços (Simplificado)
         const { data: products, error: productsError } = await supabase.from('products').select('nome, preco, estoque_atual').eq('tenant_id', tenantId).limit(20)
         if (productsError) console.error("Erro ao buscar produtos:", productsError) // Não impede o contexto de ser gerado
@@ -293,14 +293,14 @@ async function getTenantContext(tenantId) {
         context += `Ramo de Atividade: ${tenant?.tipo || 'Comércio'}\n`
         context += `Descrição da Empresa: ${tenant?.descricao || ''}\n`
         context += `Endereço: ${tenant?.endereco || ''}, ${tenant?.cidade || ''}\n`
-        
+
         if (products && products.length > 0) {
             context += `\nPRODUTOS/SERVIÇOS DISPONÍVEIS:\n`
             products.forEach(p => {
                 context += `- ${p.nome}: R$ ${p.preco ? p.preco.toFixed(2) : 'Sob consulta'} (Estoque: ${p.estoque_atual || 'Sob consulta'})\n`
             })
         }
-        
+
         return context
     } catch (err) {
         console.error(`Erro ao buscar contexto para Tenant ${tenantId}:`, err)
@@ -318,14 +318,14 @@ async function getAIResponse(text, configs) {
 
         if (provider === 'gemini') {
             const genAI = new GoogleGenerativeAI(configs.api_key)
-            const model = genAI.getGenerativeModel({ 
+            const model = genAI.getGenerativeModel({
                 model: configs.model,
                 systemInstruction: configs.system_prompt // Gemini SDK aceita systemInstruction
             })
             const result = await model.generateContent(text)
             return result.response.text()
-        } 
-        
+        }
+
         // Lógica para Groq e OpenRouter via Fetch (OpenAI Compatible)
         let apiUrl = ""
         if (provider === 'groq') {
@@ -404,7 +404,7 @@ app.post('/stop/:tenantId', async (req, res) => {
     console.log(`[API /stop] Recebido para tenantId: "${tenantId}"`)
     const session = sessions.get(tenantId)
     const authPath = path.join(__dirname, `auth_info_baileys/tenant_${tenantId}`)
-    
+
     console.log(`[API /stop] Sessão ativa: ${!!session} | authPath existe: ${fs.existsSync(authPath)}`)
     if (session && session.sock) {
         try {
@@ -438,11 +438,11 @@ app.post('/ai/reload/:tenantId', async (req, res) => {
 app.post('/ai/list-models', async (req, res) => {
     const { api_key, provider } = req.body
     if (!api_key || !provider) return res.status(400).json({ error: 'API Key e Provedor necessários' })
-    
+
     try {
         let apiUrl = ""
         let headers = {}
-        
+
         if (provider === 'gemini') {
             apiUrl = `https://generativelanguage.googleapis.com/v1beta/models?key=${api_key}`
         } else if (provider === 'groq') {
@@ -457,7 +457,7 @@ app.post('/ai/list-models', async (req, res) => {
 
         const response = await fetch(apiUrl, { headers })
         const data = await response.json()
-        
+
         if (data.error) {
             throw new Error(data.error.message || 'Erro ao buscar modelos')
         }
@@ -485,7 +485,7 @@ app.post('/ai/list-models', async (req, res) => {
 app.get('/groups/:tenantId', async (req, res) => {
     const { tenantId } = req.params
     const session = sessions.get(tenantId)
-    
+
     if (!session || session.status !== 'authenticated') {
         return res.status(503).json({ success: false, error: 'WhatsApp não está conectado para este tenant' })
     }
@@ -528,10 +528,10 @@ app.post('/send/:tenantId', async (req, res) => {
                 formattedNumber = `${formattedNumber}@s.whatsapp.net`
             }
         }
-        
+
         await session.sock.sendMessage(formattedNumber, { text: message })
         console.log(`Mensagem enviada pelo Tenant ${tenantId} para ${number}`)
-        
+
         res.json({ success: true, status: 'Enviado' })
     } catch (err) {
         console.error(`Erro de envio (Tenant ${tenantId}):`, err)
