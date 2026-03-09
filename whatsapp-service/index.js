@@ -201,8 +201,9 @@ async function loadTenantAIConfigs(tenantId) {
             }
         } else {
             // Tenants usam a nova tabela 'whatsapp_tenant_configs'
-            const { data, error } = await supabase.from('whatsapp_tenant_configs').select('*').eq('tenant_id', tenantId).maybe_single()
+            const { data: tenantDataArray, error } = await supabase.from('whatsapp_tenant_configs').select('*').eq('tenant_id', tenantId).limit(1)
             if (error) throw error
+            const data = tenantDataArray && tenantDataArray.length > 0 ? tenantDataArray[0] : null
             
             configData = {
                 ai_provider: data?.ai_provider || 'gemini',
