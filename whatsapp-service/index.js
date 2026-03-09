@@ -177,11 +177,17 @@ async function connectToWhatsApp(tenantId) {
             const isReplyToMe = !!(contextInfo?.participant?.includes(botId) || (botLidShort && contextInfo?.participant?.includes(botLidShort)))
 
             // Verificação de Palavra-Chave (ai_prefix agora é tenant-specific)
-            const keyword = session.aiConfigs?.ai_prefix?.trim() || ""
+            const configs = session.aiConfigs || {}
+            const keyword = configs.ai_prefix?.trim() || ""
             const normalizeText = (text) => text ? text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase() : ""
             const normContent = normalizeText(content)
             const normKeyword = normalizeText(keyword)
             const containsKeyword = Boolean(normKeyword && normContent.includes(normKeyword))
+
+            // Log de diagnóstico para o problema da "primeira chamada"
+            if (isGroup || containsKeyword) {
+                console.log(`[CHECK] Tenant: ${tenantId} | Bot Ativo: ${configs.ai_bot_enabled} | Keyword: "${keyword}" | Encontrou: ${containsKeyword}`)
+            }
 
             // ───────────────── MEMÓRIA DE GRUPOS (Rolling Summary) ─────────────────
             const author = msg.pushName || (msg.key.remoteJid.split('@')[0])
@@ -219,7 +225,8 @@ async function connectToWhatsApp(tenantId) {
             }
 
             // Responde se: Ativo + (PV ou Menção ou Resposta ou Keyword)
-            if (session.aiConfigs?.ai_bot_enabled === true && (!isGroup || isMentioned || isReplyToMe || containsKeyword)) {
+            const isBotEnabled = String(session.aiConfigs?.ai_bot_enabled) === 'true'
+            if (isBotEnabled && (!isGroup || isMentioned || isReplyToMe || containsKeyword)) {
                 console.log(`🤖 IA (Tenant ${tenantId}): Processando mensagem de ${remoteJid}`)
 
                 // Limpa JID, LID e Palavra-Chave do texto
@@ -498,7 +505,11 @@ app.post('/start', (req, res) => res.redirect(307, '/start/admin'))
 app.post('/stop', (req, res) => res.redirect(307, '/stop/admin'))
 app.get('/groups', (req, res) => res.redirect('/groups/admin'))
 app.post('/send', (req, res) => res.redirect(307, '/send/admin'))
-app.post('/ai/reload', (req, res) => res.redirect(307, '/ai/reload/admin'))
+app.post('/ai/reload', async (req, res) => {
+    console.log(`🔄 Recarregando configurações de IA para o Admin (Global)...`)
+    await loadTenantAIConfigs(ADMIN_TENANT_ID)
+    res.json({ success: true, message: 'Configurações de IA do Admin recarregadas.' })
+})
 
 app.get('/status/:tenantId', (req, res) => {
     const { tenantId } = req.params
