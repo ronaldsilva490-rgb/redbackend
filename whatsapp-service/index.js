@@ -1,16 +1,67 @@
-const express = require('express')
-const cors = require('cors')
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, Browsers, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys')
-const pino = require('pino')
-const QRCode = require('qrcode')
+require('dotenv').config()
+const { GoogleGenerativeAI } = require('@google/generative-ai')
+const { createClient } = require('@supabase/supabase-js')
 
 const app = express()
 app.use(cors())
 app.use(express.json())
 
+// ── Configuração Supabase ──
+const supabase = createClient(
+    process.env.SUPABASE_URL || "",
+    process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_KEY || ""
+)
+
 let sock = null
 let currentQr = null
-let qrStatus = 'disconnected' // 'connecting', 'qrcode', 'authenticated'
+let qrStatus = 'disconnected' 
+
+// ── Estado da IA em Memória ──
+let aiConfigs = {
+    gemini_api_key: process.env.GEMINI_API_KEY || "",
+    gemini_model: "",
+    gemini_system_prompt: "Você é o assistente virtual da Red Comercial. Responda de forma prestativa e descontraída.",
+    ai_bot_enabled: "false"
+}
+let aiModel = null
+
+async function loadAIConfigs() {
+    try {
+        const { data, error } = await supabase.table('ai_configs').select('*')
+        if (!error && data) {
+            data.forEach(item => {
+                aiConfigs[item.key] = item.value
+            })
+            console.log('✅ Configurações de IA carregadas do Banco de Dados.')
+            initAIModel()
+        }
+    } catch (err) {
+        console.error('Erro ao carregar configs de IA:', err)
+    }
+}
+
+function initAIModel() {
+    if (aiConfigs.gemini_api_key && aiConfigs.gemini_model) {
+        const genAI = new GoogleGenerativeAI(aiConfigs.gemini_api_key)
+        aiModel = genAI.getGenerativeModel({ 
+            model: aiConfigs.gemini_model,
+            systemInstruction: aiConfigs.gemini_system_prompt
+        })
+    } else {
+        aiModel = null
+    }
+}
+
+async function getGeminiResponse(text) {
+    try {
+        if (!aiModel) return null
+        const result = await aiModel.generateContent(text)
+        return result.response.text()
+    } catch (err) {
+        console.error('Erro Gemini:', err)
+        return "Eita, deu um revertério aqui na minha cabeça agora! Tenta de novo mais tarde, viu? 🤯"
+    }
+}
 
 async function connectToWhatsApp() {
     const { state, saveCreds } = await useMultiFileAuthState('/data/auth_info_baileys')
@@ -52,17 +103,89 @@ async function connectToWhatsApp() {
     })
 
     sock.ev.on('creds.update', saveCreds)
+
+    // ── Listener de Mensagens (IA Bot) ──
+    sock.ev.on('messages.upsert', async ({ messages, type }) => {
+        if (type !== 'notify') return
+        
+        const botNumber = sock.user.id.split(':')[0] + '@s.whatsapp.net'
+
+        for (const msg of messages) {
+            if (!msg.message || msg.key.fromMe) continue
+
+            const remoteJid = msg.key.remoteJid
+            const isGroup = remoteJid.endsWith('@g.us')
+            const text = msg.message.conversation || msg.message.extendedTextMessage?.text || ""
+            
+            // Lógica de Mentions/Replies em Grupos
+            const contextInfo = msg.message.extendedTextMessage?.contextInfo
+            const isMentioned = contextInfo?.mentionedJid?.includes(botNumber)
+            const isReplyToMe = contextInfo?.participant === botNumber
+            
+            // Responde se: 1. Bot Ativo | 2. PV | 3. Grupo + Menção | 4. Grupo + Resposta ao Bot
+            if (aiConfigs.ai_bot_enabled === 'true' && (!isGroup || isMentioned || isReplyToMe)) {
+                console.log(`🤖 IA: Processando mensagem de ${remoteJid}`)
+                
+                // Limpa menção do texto
+                const cleanText = text.replace(new RegExp(`@${botNumber.split('@')[0]}`, 'g'), '').trim()
+                
+                const response = await getGeminiResponse(cleanText || "Oi!")
+                if (response) {
+                    await sock.sendMessage(remoteJid, { text: response }, { quoted: msg })
+                }
+            }
+        }
+    })
 }
 
 // Inicializa no boot
 connectToWhatsApp()
+loadAIConfigs()
 
 // Endpoints
 app.get('/status', (req, res) => {
     res.json({
         status: qrStatus,
-        qr: currentQr
+        qr: currentQr,
+        ai: {
+            enabled: aiConfigs.ai_bot_enabled === 'true',
+            model: aiConfigs.gemini_model
+        }
     })
+})
+
+app.post('/ai/reload', (req, res) => {
+    console.log('🔄 Recarregando configurações de IA manualmente...')
+    loadAIConfigs()
+    res.json({ success: true })
+})
+
+app.post('/ai/list-models', async (req, res) => {
+    const { api_key } = req.body
+    if (!api_key) return res.status(400).json({ error: 'API Key necessária' })
+    
+    try {
+        // Busca os modelos reais da API do Google
+        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${api_key}`)
+        const data = await response.json()
+        
+        if (data.error) {
+            throw new Error(data.error.message || 'Erro ao buscar modelos')
+        }
+
+        // Filtra modelos que suportam geração de conteúdo (generateContent)
+        const models = data.models
+            .filter(m => m.supportedGenerationMethods.includes('generateContent'))
+            .map(m => ({
+                id: m.name.replace('models/', ''),
+                name: m.displayName
+            }))
+
+        res.json({ success: true, models })
+    } catch (err) {
+        console.error('Erro ao listar modelos:', err)
+        res.status(500).json({ error: err.message })
+    }
 })
 
 app.get('/groups', async (req, res) => {

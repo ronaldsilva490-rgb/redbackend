@@ -602,7 +602,7 @@ def whatsapp_groups():
     import os
     node_url = os.environ.get('WHATSAPP_SERVICE_URL', 'http://localhost:3001')
     try:
-        resp = requests.get(f"{node_url}/groups", timeout=5)
+        resp = requests.get(f"{node_url}/groups", timeout=10)
         if resp.status_code == 200:
             return success(resp.json())
         return error(f"Falha do serviço Node: {resp.text}", 500)
@@ -610,3 +610,67 @@ def whatsapp_groups():
          return error("O microserviço Node está offline.", 503)
     except Exception as e:
          return error(f"Falha ao conectar no microserviço Node: {str(e)}", 500)
+
+
+# ═══════════════════════════════════════════════════════════
+# CONFIGURAÇÕES DE IA (GEMINI)
+# ═══════════════════════════════════════════════════════════
+
+@admin_bp.get("/ai/configs")
+@require_admin
+def get_ai_configs():
+    """Retorna as configurações de IA da tabela ai_configs."""
+    sb = get_supabase_admin()
+    try:
+        resp = sb.table("ai_configs").select("*").execute()
+        # Converte lista de objetos {key, value} em um dicionário plano
+        configs = {item['key']: item['value'] for item in resp.data}
+        return success(configs)
+    except Exception as e:
+        return error(f"Erro ao buscar configs de IA: {str(e)}", 500)
+
+@admin_bp.post("/ai/configs")
+@require_admin
+def update_ai_configs():
+    """Atualiza as configurações de IA e notifica o microserviço WhatsApp."""
+    body = request.get_json() or {}
+    sb = get_supabase_admin()
+    try:
+        # Atualiza cada chave enviada
+        for key, value in body.items():
+            sb.table("ai_configs").upsert({
+                "key": key,
+                "value": str(value),
+                "updated_at": datetime.now(timezone.utc).isoformat()
+            }).execute()
+        
+        # Notifica o microserviço WhatsApp para recarregar as configs em memória
+        import os
+        node_url = os.environ.get('WHATSAPP_SERVICE_URL', 'http://localhost:3001')
+        try:
+            requests.post(f"{node_url}/ai/reload", json=body, timeout=5)
+        except:
+            pass # Se o node estiver off, ele carregará da DB ao iniciar
+            
+        return success("Configurações atualizadas com sucesso")
+    except Exception as e:
+        return error(f"Erro ao atualizar configs de IA: {str(e)}", 500)
+
+@admin_bp.post("/ai/list-models")
+@require_admin
+def list_ai_models():
+    """Solicita ao microserviço WhatsApp a listagem de modelos disponíveis para uma API Key."""
+    body = request.get_json() or {}
+    api_key = body.get("api_key")
+    if not api_key:
+        return error("API Key é obrigatória para listar modelos")
+
+    import os
+    node_url = os.environ.get('WHATSAPP_SERVICE_URL', 'http://localhost:3001')
+    try:
+        resp = requests.post(f"{node_url}/ai/list-models", json={"api_key": api_key}, timeout=10)
+        if resp.status_code == 200:
+            return success(resp.json())
+        return error(f"Erro ao listar modelos: {resp.text}", 500)
+    except Exception as e:
+        return error(f"Falha ao conectar no microserviço de IA: {str(e)}", 500)
