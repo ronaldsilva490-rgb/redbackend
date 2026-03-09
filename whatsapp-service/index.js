@@ -23,11 +23,17 @@ let qrStatus = 'disconnected'
 
 // ── Estado da IA em Memória ──
 let aiConfigs = {
+    ai_provider: 'gemini',
     gemini_api_key: process.env.GEMINI_API_KEY || "",
     gemini_model: "",
+    groq_api_key: "",
+    groq_model: "",
+    openrouter_api_key: "",
+    openrouter_model: "",
     gemini_system_prompt: "Você é o assistente virtual da Red Comercial. Responda de forma prestativa e descontraída.",
     ai_bot_enabled: "false"
 }
+let genAI = null
 let aiModel = null
 
 async function loadAIConfigs() {
@@ -46,24 +52,74 @@ async function loadAIConfigs() {
 }
 
 function initAIModel() {
-    if (aiConfigs.gemini_api_key && aiConfigs.gemini_model) {
-        const genAI = new GoogleGenerativeAI(aiConfigs.gemini_api_key)
-        aiModel = genAI.getGenerativeModel({ 
-            model: aiConfigs.gemini_model,
-            systemInstruction: aiConfigs.gemini_system_prompt
-        })
+    const provider = aiConfigs.ai_provider || 'gemini'
+    console.log(`🤖 Inicializando Provedor de IA: ${provider}`)
+    
+    if (provider === 'gemini') {
+        if (aiConfigs.gemini_api_key && aiConfigs.gemini_model) {
+            genAI = new GoogleGenerativeAI(aiConfigs.gemini_api_key)
+            aiModel = genAI.getGenerativeModel({ 
+                model: aiConfigs.gemini_model,
+                systemInstruction: aiConfigs.gemini_system_prompt
+            })
+        } else {
+            aiModel = null
+        }
     } else {
-        aiModel = null
+        // Para Groq e OpenRouter, não usamos SDK específico aqui (usamos fetch no call)
+        aiModel = provider 
     }
 }
 
-async function getGeminiResponse(text) {
+async function getAIResponse(text) {
+    const provider = aiConfigs.ai_provider || 'gemini'
     try {
         if (!aiModel) return null
-        const result = await aiModel.generateContent(text)
-        return result.response.text()
+
+        if (provider === 'gemini') {
+            const result = await aiModel.generateContent(text)
+            return result.response.text()
+        } 
+        
+        // Lógica para Groq e OpenRouter via Fetch (OpenAI Compatible)
+        let apiUrl = ""
+        let apiKey = ""
+        let model = ""
+        
+        if (provider === 'groq') {
+            apiUrl = "https://api.groq.com/openai/v1/chat/completions"
+            apiKey = aiConfigs.groq_api_key
+            model = aiConfigs.groq_model
+        } else if (provider === 'openrouter') {
+            apiUrl = "https://openrouter.ai/api/v1/chat/completions"
+            apiKey = aiConfigs.openrouter_api_key
+            model = aiConfigs.openrouter_model
+        }
+
+        if (!apiKey || !model) return null
+
+        const response = await fetch(apiUrl, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${apiKey}`,
+                'HTTP-Referer': 'https://redcomercial.com.br', // Recomendado pelo OpenRouter
+                'X-Title': 'Red Comercial Bot'
+            },
+            body: JSON.stringify({
+                model: model,
+                messages: [
+                    { role: "system", content: aiConfigs.gemini_system_prompt },
+                    { role: "user", content: text }
+                ]
+            })
+        })
+
+        const data = await response.json()
+        return data.choices?.[0]?.message?.content || null
+
     } catch (err) {
-        console.error('Erro Gemini:', err)
+        console.error(`Erro na IA (${provider}):`, err)
         return "Eita, deu um revertério aqui na minha cabeça agora! Tenta de novo mais tarde, viu? 🤯"
     }
 }
@@ -158,7 +214,7 @@ async function connectToWhatsApp() {
                     cleanText = cleanText.replace(new RegExp(`@${botLidShort}`, 'g'), '').trim()
                 }
                 
-                const response = await getGeminiResponse(cleanText || "Oi!")
+                const response = await getAIResponse(cleanText || "Oi!")
                 if (response) {
                     await sock.sendMessage(remoteJid, { text: response }, { quoted: msg })
                 }
@@ -190,25 +246,42 @@ app.post('/ai/reload', (req, res) => {
 })
 
 app.post('/ai/list-models', async (req, res) => {
-    const { api_key } = req.body
-    if (!api_key) return res.status(400).json({ error: 'API Key necessária' })
+    const { api_key, provider } = req.body
+    if (!api_key || !provider) return res.status(400).json({ error: 'API Key e Provedor necessários' })
     
     try {
-        // Busca os modelos reais da API do Google
-        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${api_key}`)
+        let apiUrl = ""
+        let headers = {}
+        
+        if (provider === 'gemini') {
+            apiUrl = `https://generativelanguage.googleapis.com/v1beta/models?key=${api_key}`
+        } else if (provider === 'groq') {
+            apiUrl = "https://api.groq.com/openai/v1/models"
+            headers = { "Authorization": `Bearer ${api_key}` }
+        } else if (provider === 'openrouter') {
+            apiUrl = "https://openrouter.ai/api/v1/models"
+            headers = { "Authorization": `Bearer ${api_key}` }
+        }
+
+        const response = await fetch(apiUrl, { headers })
         const data = await response.json()
         
         if (data.error) {
             throw new Error(data.error.message || 'Erro ao buscar modelos')
         }
 
-        // Filtra modelos que suportam geração de conteúdo (generateContent)
-        const models = data.models
-            .filter(m => m.supportedGenerationMethods.includes('generateContent'))
-            .map(m => ({
-                id: m.name.replace('models/', ''),
-                name: m.displayName
+        let models = []
+        if (provider === 'gemini') {
+            models = data.models
+                .filter(m => m.supportedGenerationMethods.includes('generateContent'))
+                .map(m => ({ id: m.name.replace('models/', ''), name: m.displayName }))
+        } else {
+            // Groq e OpenRouter retornam array 'data'
+            models = (data.data || []).map(m => ({
+                id: m.id,
+                name: m.id // Geralmente o id é o nome técnico (ex: gpt-3.5-turbo)
             }))
+        }
 
         res.json({ success: true, models })
     } catch (err) {

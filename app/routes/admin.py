@@ -662,13 +662,15 @@ def list_ai_models():
     """Solicita ao microserviço WhatsApp a listagem de modelos disponíveis para uma API Key."""
     body = request.get_json() or {}
     api_key = body.get("api_key")
+    provider = body.get("provider", "gemini")
+    
     if not api_key:
         return error("API Key é obrigatória para listar modelos")
 
     import os
     node_url = os.environ.get('WHATSAPP_SERVICE_URL', 'http://localhost:3001')
     try:
-        resp = requests.post(f"{node_url}/ai/list-models", json={"api_key": api_key}, timeout=10)
+        resp = requests.post(f"{node_url}/ai/list-models", json={"api_key": api_key, "provider": provider}, timeout=10)
         if resp.status_code == 200:
             return success(resp.json())
         return error(f"Erro ao listar modelos: {resp.text}", 500)
