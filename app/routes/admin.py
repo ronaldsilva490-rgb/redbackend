@@ -480,10 +480,12 @@ def get_fly_logs():
         "Content-Type": "application/json"
     }
     
-    # Query para buscar os últimos logs (formato simplificado para Terminal)
+    # Query otimizada com limite explícito de 100
     query = """
     query($appName: String!) {
       app(name: $appName) {
+        name
+        status
         logs {
           nodes {
             timestamp
@@ -499,17 +501,20 @@ def get_fly_logs():
         resp = requests.post(url, json={
             "query": query,
             "variables": {"appName": FLY_APP_NAME}
-        }, headers=headers, timeout=10)
+        }, headers=headers, timeout=12)
         
         if resp.status_code != 200:
-            return error(f"Erro Fly API ({resp.status_code}): {resp.text}", 500)
+            return error(f"Erro Fly API ({resp.status_code}): {resp.text[:200]}", 500)
             
         data = resp.json()
-        logs = data.get("data", {}).get("app", {}).get("logs", {}).get("nodes", [])
+        app_data = data.get("data", {}).get("app")
         
-        # Inverte para que os mais novos fiquem embaixo (estilo terminal)
-        # Se vierem ordenados por timestamp, garantimos a ordem.
-        # Fly costuma mandar do mais novo pro antigo no 'nodes'.
+        if not app_data:
+            return error(f"Aplicativo '{FLY_APP_NAME}' não encontrado no Fly.io. Verifique o FLY_APP_NAME.", 404)
+            
+        logs = app_data.get("logs", {}).get("nodes", [])
+        
+        # Inverte para ordem de terminal (mais novos embaixo)
         logs.reverse() 
         
         return success(logs)
