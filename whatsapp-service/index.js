@@ -137,11 +137,24 @@ async function connectToWhatsApp() {
             const isReplyToMe = !!contextInfo?.participant?.includes(botId)
             
             if (isGroup) {
-                console.log(`📩 Grupo (${remoteJid}): text: "${content.substring(0,20)}...", isMentioned: ${isMentioned}, isReplyToMe: ${isReplyToMe}`)
+                console.log(`📩 [DEBUG GRUPO] RemoteJid: ${remoteJid}`)
+                console.log(`   - Texto: "${content}"`)
+                console.log(`   - ContextInfo detectado: ${contextInfo ? 'Sim' : 'Não'}`)
+                if (contextInfo) {
+                    console.log(`   - mentionedJid: ${JSON.stringify(contextInfo.mentionedJid)}`)
+                    console.log(`   - participant (reply): ${contextInfo.participant}`)
+                }
+                console.log(`   - containsBotId: ${content.includes(botId)}`)
             }
 
-            // Responde se: 1. Bot Ativo | 2. PV | 3. Grupo + Menção | 4. Grupo + Resposta ao Bot
-            if (aiConfigs.ai_bot_enabled === 'true' && (!isGroup || isMentioned || isReplyToMe)) {
+            // Responde se: 1. Bot Ativo | 2. PV | 3. Grupo + Menção | 4. Grupo + Resposta ao Bot | 5. Contém ID do Bot no texto
+            const shouldRespond = aiConfigs.ai_bot_enabled === 'true' && (!isGroup || isMentioned || isReplyToMe || content.includes(botId))
+            
+            if (isGroup) {
+                console.log(`   - isMentioned: ${isMentioned}, isReplyToMe: ${isReplyToMe}, shouldRespond: ${shouldRespond}`)
+            }
+
+            if (shouldRespond) {
                 console.log(`🤖 IA: Processando mensagem de ${remoteJid}`)
                 
                 const cleanText = content.replace(new RegExp(`@${botId}`, 'g'), '').trim()
