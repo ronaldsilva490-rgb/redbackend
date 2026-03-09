@@ -13,8 +13,8 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Dependências Node (microserviço WhatsApp)
-COPY whatsapp-service/package.json whatsapp-service/package-lock.json* whatsapp-service/
-RUN cd whatsapp-service && npm install --production
+COPY whatsapp-service/package.json whatsapp-service/
+RUN cd whatsapp-service && npm install --omit=dev
 
 # Código da aplicação
 COPY . .
