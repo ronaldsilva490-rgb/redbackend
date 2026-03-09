@@ -114,8 +114,11 @@ async function connectToWhatsApp() {
         if (type !== 'notify') return
         
         const botNumber = jidDecode(sock.user.id)?.user + '@s.whatsapp.net'
+        const botLid = sock.user.lid || ''
         const botId = botNumber.split('@')[0]
-        console.log(`🤖 Bot ID: ${botNumber}`)
+        const botLidShort = botLid.split('@')[0]
+        
+        console.log(`🤖 Bot ID: ${botNumber} | LID: ${botLid}`)
 
         for (const msg of messages) {
             if (!msg.message || msg.key.fromMe) continue
@@ -133,31 +136,27 @@ async function connectToWhatsApp() {
                               m.viewOnceMessage?.message?.imageMessage?.contextInfo || m.viewOnceMessage?.message?.videoMessage?.contextInfo ||
                               m.viewOnceMessageV2?.message?.imageMessage?.contextInfo || m.viewOnceMessageV2?.message?.videoMessage?.contextInfo
 
-            const isMentioned = !!contextInfo?.mentionedJid?.some(jid => jid.includes(botId))
-            const isReplyToMe = !!contextInfo?.participant?.includes(botId)
+            // Verifica menção pelo ID tradicional (JID) ou pelo novo LID
+            const isMentioned = !!contextInfo?.mentionedJid?.some(jid => 
+                jid.includes(botId) || (botLidShort && jid.includes(botLidShort))
+            )
+            const isReplyToMe = !!(contextInfo?.participant?.includes(botId) || (botLidShort && contextInfo?.participant?.includes(botLidShort)))
             
             if (isGroup) {
-                console.log(`📩 [DEBUG GRUPO] RemoteJid: ${remoteJid}`)
-                console.log(`   - Texto: "${content}"`)
-                console.log(`   - ContextInfo detectado: ${contextInfo ? 'Sim' : 'Não'}`)
-                if (contextInfo) {
-                    console.log(`   - mentionedJid: ${JSON.stringify(contextInfo.mentionedJid)}`)
-                    console.log(`   - participant (reply): ${contextInfo.participant}`)
-                }
-                console.log(`   - containsBotId: ${content.includes(botId)}`)
+                console.log(`📩 [DEBUG GRUPO] text: "${content.substring(0,30)}..."`)
+                console.log(`   - mentionedJid: ${JSON.stringify(contextInfo?.mentionedJid)}`)
+                console.log(`   - isMentioned: ${isMentioned}, isReplyToMe: ${isReplyToMe}`)
             }
 
-            // Responde se: 1. Bot Ativo | 2. PV | 3. Grupo + Menção | 4. Grupo + Resposta ao Bot | 5. Contém ID do Bot no texto
-            const shouldRespond = aiConfigs.ai_bot_enabled === 'true' && (!isGroup || isMentioned || isReplyToMe || content.includes(botId))
-            
-            if (isGroup) {
-                console.log(`   - isMentioned: ${isMentioned}, isReplyToMe: ${isReplyToMe}, shouldRespond: ${shouldRespond}`)
-            }
-
-            if (shouldRespond) {
+            // Responde se: 1. Bot Ativo | 2. PV | 3. Grupo + Menção | 4. Grupo + Resposta ao Bot
+            if (aiConfigs.ai_bot_enabled === 'true' && (!isGroup || isMentioned || isReplyToMe)) {
                 console.log(`🤖 IA: Processando mensagem de ${remoteJid}`)
                 
-                const cleanText = content.replace(new RegExp(`@${botId}`, 'g'), '').trim()
+                // Limpa tanto o JID quanto o LID do texto
+                let cleanText = content.replace(new RegExp(`@${botId}`, 'g'), '').trim()
+                if (botLidShort) {
+                    cleanText = cleanText.replace(new RegExp(`@${botLidShort}`, 'g'), '').trim()
+                }
                 
                 const response = await getGeminiResponse(cleanText || "Oi!")
                 if (response) {
