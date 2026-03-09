@@ -68,7 +68,11 @@ app.get('/status', (req, res) => {
 app.get('/groups', async (req, res) => {
     try {
         if (qrStatus !== 'authenticated' || !sock) {
-            return res.status(503).json({ error: 'WhatsApp não está conectado' })
+            return res.status(503).json({ success: false, error: 'WhatsApp não está conectado' })
+        }
+        // Verifica se o método existe antes de chamar
+        if (typeof sock.groupFetchAllParticipating !== 'function') {
+            return res.status(503).json({ success: false, error: 'Socket não suporta listagem de grupos nesta versão' })
         }
         const groupMetadata = await sock.groupFetchAllParticipating()
         const groups = Object.values(groupMetadata).map(group => ({
@@ -77,8 +81,9 @@ app.get('/groups', async (req, res) => {
         }))
         res.json({ success: true, groups })
     } catch (err) {
-        console.error('Erro ao buscar grupos:', err)
-        res.status(500).json({ error: err.message })
+        console.error('Erro ao buscar grupos (sem derrubar conexão):', err?.message || err)
+        // Retorna erro SEM deixar o crash propagar pro socket principal
+        res.status(500).json({ success: false, error: 'Erro ao buscar grupos: ' + (err?.message || 'desconhecido') })
     }
 })
 
