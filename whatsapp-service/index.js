@@ -113,19 +113,25 @@ async function connectToWhatsApp() {
     sock.ev.on('messages.upsert', async ({ messages, type }) => {
         if (type !== 'notify') return
         
-        const botNumber = sock.user.id.split(':')[0] + '@s.whatsapp.net'
+        const botNumber = jidDecode(sock.user.id)?.user + '@s.whatsapp.net'
 
         for (const msg of messages) {
             if (!msg.message || msg.key.fromMe) continue
 
             const remoteJid = msg.key.remoteJid
             const isGroup = remoteJid.endsWith('@g.us')
-            const text = msg.message.conversation || msg.message.extendedTextMessage?.text || ""
+            
+            // Captura de texto de diferentes tipos de mensagem
+            const messageType = Object.keys(msg.message)[0]
+            const text = msg.message.conversation || 
+                         msg.message.extendedTextMessage?.text || 
+                         msg.message.imageMessage?.caption || 
+                         msg.message.videoMessage?.caption || ""
             
             // Lógica de Mentions/Replies em Grupos
-            const contextInfo = msg.message.extendedTextMessage?.contextInfo
-            const isMentioned = contextInfo?.mentionedJid?.includes(botNumber)
-            const isReplyToMe = contextInfo?.participant === botNumber
+            const contextInfo = msg.message[messageType]?.contextInfo
+            const isMentioned = contextInfo?.mentionedJid?.some(jid => jid.startsWith(botNumber.split('@')[0]))
+            const isReplyToMe = contextInfo?.participant?.startsWith(botNumber.split('@')[0])
             
             // Responde se: 1. Bot Ativo | 2. PV | 3. Grupo + Menção | 4. Grupo + Resposta ao Bot
             if (aiConfigs.ai_bot_enabled === 'true' && (!isGroup || isMentioned || isReplyToMe)) {
