@@ -19,8 +19,8 @@ PALAVRA_MESTRE  = os.getenv("ADMIN_PALAVRA_MESTRE", "redmaster2024")
 
 # Infraestrutura monitorada
 FLY_URL              = os.getenv("FLY_URL", "https://redbackend.fly.dev")
-FLY_API_TOKEN        = os.getenv("FLY_API_TOKEN", "")
-FLY_APP_NAME         = os.getenv("FLY_APP_NAME", "redbackend")
+FLY_API_TOKEN        = os.getenv("FLY_API_TOKEN", "").strip()
+FLY_APP_NAME         = os.getenv("FLY_APP_NAME", "redbackend").strip()
 GITHUB_TOKEN         = os.getenv("GITHUB_TOKEN", "")
 GITHUB_REPO          = os.getenv("GITHUB_REPO", "")
 GITHUB_BACKEND_REPO  = os.getenv("GITHUB_BACKEND_REPO", "")
