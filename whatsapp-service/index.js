@@ -70,14 +70,20 @@ async function connectToWhatsApp(tenantId) {
         }
 
         if (connection === 'close') {
-            const shouldReconnect = (lastDisconnect?.error)?.output?.statusCode !== DisconnectReason.loggedOut
-            console.log(`❌ Conexão Fechada (Tenant: ${tenantId}). Reconectar: ${shouldReconnect}`)
+            const statusCode = (lastDisconnect?.error)?.output?.statusCode
+            const shouldReconnect = statusCode !== DisconnectReason.loggedOut && statusCode !== 428
+            console.log(`❌ Conexão Fechada (Tenant: ${tenantId}). Reconectar: ${shouldReconnect}. Status Code: ${statusCode}`)
             session.status = 'disconnected'
             session.lastQr = null
+            
+            if (statusCode === 428) {
+                console.log(`⚠️ ERRO 428 (Precondition Required) detectado no Tenant ${tenantId}. Forçando limpeza da sessão corrompida.`)
+            }
+
             if (shouldReconnect) {
                 connectToWhatsApp(tenantId)
             } else {
-                console.log(`🚫 Tenant ${tenantId} Deslogado. Limpando...`)
+                console.log(`🚫 Tenant ${tenantId} Deslogado ou Corrompido. Limpando...`)
                 sessions.delete(tenantId)
                 if (tenantId !== 'admin') {
                     await supabase.from('whatsapp_sessions').delete().eq('tenant_id', tenantId)
@@ -374,18 +380,26 @@ app.post('/start/:tenantId', async (req, res) => {
 app.post('/stop/:tenantId', async (req, res) => {
     const { tenantId } = req.params
     const session = sessions.get(tenantId)
+    
+    // Força a exclusão do dirted folder sempre que alguém pedir stop (Reset Manual Admin)
+    const authPath = path.join(__dirname, `auth_info_baileys/tenant_${tenantId}`)
+    
     if (session && session.sock) {
         try {
             await session.sock.logout() // Isso deve disparar o 'connection.update' com DisconnectReason.loggedOut
             console.log(`Sessão do Tenant ${tenantId} desconectada via logout.`)
-            // A limpeza completa (sessions.delete, supabase, fs.rmSync) é feita no handler 'connection.update'
             res.json({ success: true, message: 'Sessão desconectada com sucesso.' })
         } catch (e) {
             console.error(`Erro ao fazer logout do Tenant ${tenantId}:`, e)
             res.status(500).json({ success: false, message: 'Erro ao desconectar a sessão.' })
         }
     } else {
-        res.json({ success: true, message: 'Nenhuma sessão ativa para este tenant.' })
+        // Se a sessão em RAM morreu mas a pasta corrompida existe, a API deve limpar a pasta pra poder reconectar depois
+        if (fs.existsSync(authPath)) {
+             fs.rmSync(authPath, { recursive: true, force: true })
+             console.log(`Limpeza manual da pasta de auth pendente do Tenant ${tenantId}.`)
+        }
+        res.json({ success: true, message: 'Nenhuma sessão ativa para este tenant (Pastas limpas se existiam).' })
     }
 })
 
