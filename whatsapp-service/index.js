@@ -59,12 +59,14 @@ async function connectToWhatsApp(tenantId) {
             session.lastQr = await QRCode.toDataURL(qr)
             session.status = 'qrcode'
             console.log(`🔗 Novo QR Code gerado para Tenant: ${tenantId}`)
-            await supabase.from('whatsapp_sessions').upsert({ 
-                tenant_id: tenantId, 
-                status: 'qrcode', 
-                qr: session.lastQr,
-                updated_at: new Date() 
-            }, { onConflict: 'tenant_id' })
+            if (tenantId !== 'admin') {
+                await supabase.from('whatsapp_sessions').upsert({ 
+                    tenant_id: tenantId, 
+                    status: 'qrcode', 
+                    qr: session.lastQr,
+                    updated_at: new Date() 
+                }, { onConflict: 'tenant_id' })
+            }
         }
 
         if (connection === 'close') {
@@ -77,21 +79,27 @@ async function connectToWhatsApp(tenantId) {
             } else {
                 console.log(`🚫 Tenant ${tenantId} Deslogado. Limpando...`)
                 sessions.delete(tenantId)
-                await supabase.from('whatsapp_sessions').delete().eq('tenant_id', tenantId)
+                if (tenantId !== 'admin') {
+                    await supabase.from('whatsapp_sessions').delete().eq('tenant_id', tenantId)
+                }
                 // Remove pasta de auth por segurança
-                fs.rmSync(authPath, { recursive: true, force: true })
+                if (fs.existsSync(authPath)) {
+                    fs.rmSync(authPath, { recursive: true, force: true })
+                }
             }
         } else if (connection === 'open') {
             console.log(`✅ Conexão Aberta (Tenant: ${tenantId})`)
             session.status = 'authenticated'
             session.lastQr = null
-            await supabase.from('whatsapp_sessions').upsert({ 
-                tenant_id: tenantId, 
-                status: 'authenticated', 
-                phone: sock.user.id,
-                qr: null,
-                updated_at: new Date() 
-            }, { onConflict: 'tenant_id' })
+            if (tenantId !== 'admin') {
+                await supabase.from('whatsapp_sessions').upsert({ 
+                    tenant_id: tenantId, 
+                    status: 'authenticated', 
+                    phone: sock.user.id,
+                    qr: null,
+                    updated_at: new Date() 
+                }, { onConflict: 'tenant_id' })
+            }
         }
     })
 
