@@ -19,18 +19,11 @@ const supabase = createClient(
     process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_KEY || ""
 )
 
-// ── Configurações Hardcoded do Admin (Fallback garantido, independente do DB) ──
-const ADMIN_CONFIGS = {
-    ai_provider: process.env.ADMIN_AI_PROVIDER || 'gemini',
-    api_key: process.env.ADMIN_GEMINI_API_KEY || process.env.GEMINI_API_KEY || '',
-    model: process.env.ADMIN_AI_MODEL || 'gemini-1.5-flash',
-    system_prompt: 'Você é o assistente virtual da Red Comercial. Seja prestativo e objetivo.',
-    ai_prefix: process.env.ADMIN_AI_PREFIX || 'red',
-    ai_bot_enabled: false // Desabilitado por padrão até admin ativar
-}
+// ── UUID fixo do Admin (tratado como tenant real em todo o código) ──
+const ADMIN_TENANT_ID = process.env.ADMIN_TENANT_ID || 'admin'
 
 // ── Gerenciador de Sessões (Multi-Tenant) ──
-const sessions = new Map() // tenantId -> { sock, aiConfigs, lastQr }
+const sessions = new Map()
 
 // ── Prevenção de crash silencioso do processo Node ──
 process.on('uncaughtException', (err) => {
@@ -39,11 +32,6 @@ process.on('uncaughtException', (err) => {
 process.on('unhandledRejection', (reason) => {
     console.error('❌ [CRITICAL] Unhandled Rejection:', reason?.message || reason)
 })
-
-// Variáveis globais antigas removidas ou adaptadas para o modelo multi-tenant
-// let sock = null
-// let currentQr = null
-// let qrStatus = 'disconnected'
 
 // ── Funções de Conexão WhatsApp (Multi-Tenant) ──
 async function connectToWhatsApp(tenantId) {
@@ -77,14 +65,14 @@ async function connectToWhatsApp(tenantId) {
             session.lastQr = await QRCode.toDataURL(qr)
             session.status = 'qrcode'
             console.log(`🔗 Novo QR Code gerado para Tenant: ${tenantId}`)
-            if (tenantId !== 'admin') {
+            try {
                 await supabase.from('whatsapp_sessions').upsert({ 
                     tenant_id: tenantId, 
                     status: 'qrcode', 
                     qr: session.lastQr,
                     updated_at: new Date() 
                 }, { onConflict: 'tenant_id' })
-            }
+            } catch (_) {} // silencia erros de FK para tenants não cadastrados
         }
 
         if (connection === 'close') {
@@ -94,27 +82,19 @@ async function connectToWhatsApp(tenantId) {
             session.lastQr = null
 
             if (statusCode === DisconnectReason.loggedOut) {
-                // Logout explícito: limpa tudo e NÃO reconecta
-                console.log(`🚫 Tenant ${tenantId} deslogado explicitamente. Limpando...`)
+                console.log(`🚫 Tenant ${tenantId} deslogado. Limpando...`)
                 sessions.delete(tenantId)
-                if (tenantId !== 'admin') {
-                    await supabase.from('whatsapp_sessions').delete().eq('tenant_id', tenantId)
-                }
+                try { await supabase.from('whatsapp_sessions').delete().eq('tenant_id', tenantId) } catch (_) {}
                 if (fs.existsSync(authPath)) fs.rmSync(authPath, { recursive: true, force: true })
 
             } else if (statusCode === 428) {
-                // Auth corrompida: apaga pasta e gera novo QR do zero
-                console.log(`⚠️ Tenant ${tenantId}: auth corrompida (428). Apagando sessão e reiniciando fresh...`)
+                console.log(`⚠️ Tenant ${tenantId}: auth corrompida (428). Reiniciando fresh...`)
                 sessions.delete(tenantId)
-                if (tenantId !== 'admin') {
-                    await supabase.from('whatsapp_sessions').delete().eq('tenant_id', tenantId)
-                }
+                try { await supabase.from('whatsapp_sessions').delete().eq('tenant_id', tenantId) } catch (_) {}
                 if (fs.existsSync(authPath)) fs.rmSync(authPath, { recursive: true, force: true })
-                // Aguarda 2s antes de tentar novamente para evitar race condition
                 setTimeout(() => connectToWhatsApp(tenantId), 2000)
 
             } else {
-                // Qualquer outro erro: reconecta normalmente
                 console.log(`🔄 Reconectando Tenant ${tenantId}...`)
                 connectToWhatsApp(tenantId)
             }
@@ -122,7 +102,7 @@ async function connectToWhatsApp(tenantId) {
             console.log(`✅ Conexão Aberta (Tenant: ${tenantId})`)
             session.status = 'authenticated'
             session.lastQr = null
-            if (tenantId !== 'admin') {
+            try {
                 await supabase.from('whatsapp_sessions').upsert({ 
                     tenant_id: tenantId, 
                     status: 'authenticated', 
@@ -130,7 +110,7 @@ async function connectToWhatsApp(tenantId) {
                     qr: null,
                     updated_at: new Date() 
                 }, { onConflict: 'tenant_id' })
-            }
+            } catch (_) {} // silencia erros de FK para tenants não cadastrados
         }
     })
 
@@ -232,30 +212,22 @@ async function connectToWhatsApp(tenantId) {
 async function loadTenantAIConfigs(tenantId) {
     try {
         let configData = {}
+        const isAdmin = tenantId === ADMIN_TENANT_ID
 
-        if (tenantId === 'admin') {
-            // Admin: começa com valores hardcoded e tenta sobrescrever com o DB
-            configData = { ...ADMIN_CONFIGS }
-            try {
-                const { data, error } = await supabase.from('ai_configs').select('*')
-                if (!error && data && data.length > 0) {
-                    const dbConfigs = {}
-                    data.forEach(item => dbConfigs[item.key] = item.value)
-                    const provider = dbConfigs.ai_provider || configData.ai_provider
-                    configData = {
-                        ai_provider: provider,
-                        api_key: dbConfigs[`${provider}_api_key`] || configData.api_key,
-                        model: dbConfigs[`${provider}_model`] || configData.model,
-                        system_prompt: dbConfigs[`${provider}_system_prompt`] || configData.system_prompt,
-                        ai_prefix: dbConfigs.ai_prefix || configData.ai_prefix,
-                        ai_bot_enabled: dbConfigs.ai_bot_enabled === 'true'
-                    }
-                    console.log(`✅ [Admin] Configs de IA carregadas do DB. Provedor: ${configData.ai_provider}`)
-                } else {
-                    console.log(`⚠️ [Admin] Usando configs hardcoded (DB vazio ou erro). Provedor: ${configData.ai_provider}`)
-                }
-            } catch (dbErr) {
-                console.log(`⚠️ [Admin] DB indisponível, usando hardcoded: ${dbErr?.message}`)
+        if (isAdmin) {
+            // Admin usa a tabela legada 'ai_configs' (key, value)
+            const { data, error } = await supabase.from('ai_configs').select('*')
+            const configs = {}
+            if (!error && data) data.forEach(item => configs[item.key] = item.value)
+            
+            const provider = configs.ai_provider || 'gemini'
+            configData = {
+                ai_provider: provider,
+                api_key: configs[`${provider}_api_key`] || process.env.GEMINI_API_KEY || '',
+                model: configs[`${provider}_model`] || 'gemini-1.5-flash',
+                system_prompt: configs[`${provider}_system_prompt`] || 'Você é o assistente virtual da Red Comercial.',
+                ai_prefix: configs.ai_prefix || '',
+                ai_bot_enabled: configs.ai_bot_enabled === 'true'
             }
         } else {
             // Tenants usam a nova tabela 'whatsapp_tenant_configs'
@@ -269,25 +241,24 @@ async function loadTenantAIConfigs(tenantId) {
                 model: data?.model || '',
                 system_prompt: data?.system_prompt || 'Você é o assistente virtual da Red Comercial.',
                 ai_prefix: data?.ai_prefix || '',
-                ai_bot_enabled: data?.ai_enabled === true // Corrigido para 'ai_enabled' (coluna da tabela)
+                ai_bot_enabled: data?.ai_enabled === true
             }
         }
         
         const session = sessions.get(tenantId)
         if (session) {
             session.aiConfigs = configData
-            console.log(`✅ Configurações de IA carregadas para Tenant ${tenantId}. Provedor: ${configData.ai_provider}`)
+            console.log(`✅ Configs de IA carregadas para Tenant ${tenantId}. Provedor: ${configData.ai_provider}`)
         }
     } catch (err) {
-        console.error(`Erro ao carregar configs de IA para Tenant ${tenantId}:`, err)
+        console.error(`Erro ao carregar configs de IA para Tenant ${tenantId}:`, err?.message)
         const session = sessions.get(tenantId)
         if (session) {
-            // Para admin: usa hardcoded. Para tenants: usa fallback padrão
-            session.aiConfigs = tenantId === 'admin' ? { ...ADMIN_CONFIGS } : {
+            session.aiConfigs = {
                 ai_provider: 'gemini',
                 api_key: process.env.GEMINI_API_KEY || '',
                 model: 'gemini-1.5-flash',
-                system_prompt: 'Você é um assistente virtual prestativo e descontraído.',
+                system_prompt: 'Você é um assistente virtual prestativo.',
                 ai_prefix: '',
                 ai_bot_enabled: false
             }
