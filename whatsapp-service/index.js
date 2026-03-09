@@ -19,8 +19,26 @@ const supabase = createClient(
     process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_KEY || ""
 )
 
+// ── Configurações Hardcoded do Admin (Fallback garantido, independente do DB) ──
+const ADMIN_CONFIGS = {
+    ai_provider: process.env.ADMIN_AI_PROVIDER || 'gemini',
+    api_key: process.env.ADMIN_GEMINI_API_KEY || process.env.GEMINI_API_KEY || '',
+    model: process.env.ADMIN_AI_MODEL || 'gemini-1.5-flash',
+    system_prompt: 'Você é o assistente virtual da Red Comercial. Seja prestativo e objetivo.',
+    ai_prefix: process.env.ADMIN_AI_PREFIX || 'red',
+    ai_bot_enabled: false // Desabilitado por padrão até admin ativar
+}
+
 // ── Gerenciador de Sessões (Multi-Tenant) ──
 const sessions = new Map() // tenantId -> { sock, aiConfigs, lastQr }
+
+// ── Prevenção de crash silencioso do processo Node ──
+process.on('uncaughtException', (err) => {
+    console.error('❌ [CRITICAL] Uncaught Exception:', err?.message || err)
+})
+process.on('unhandledRejection', (reason) => {
+    console.error('❌ [CRITICAL] Unhandled Rejection:', reason?.message || reason)
+})
 
 // Variáveis globais antigas removidas ou adaptadas para o modelo multi-tenant
 // let sock = null
@@ -216,21 +234,28 @@ async function loadTenantAIConfigs(tenantId) {
         let configData = {}
 
         if (tenantId === 'admin') {
-            // Admin usa a tabela legada 'ai_configs' (key, value)
-            const { data, error } = await supabase.from('ai_configs').select('*')
-            if (error) throw error
-            
-            const configs = {}
-            if (data) data.forEach(item => configs[item.key] = item.value)
-            
-            const provider = configs.ai_provider || 'gemini'
-            configData = {
-                ai_provider: provider,
-                api_key: configs[`${provider}_api_key`] || "",
-                model: configs[`${provider}_model`] || "",
-                system_prompt: configs[`${provider}_system_prompt`] || "Você é o assistente virtual da Red Comercial.",
-                ai_prefix: configs.ai_prefix || "",
-                ai_bot_enabled: configs.ai_bot_enabled === 'true'
+            // Admin: começa com valores hardcoded e tenta sobrescrever com o DB
+            configData = { ...ADMIN_CONFIGS }
+            try {
+                const { data, error } = await supabase.from('ai_configs').select('*')
+                if (!error && data && data.length > 0) {
+                    const dbConfigs = {}
+                    data.forEach(item => dbConfigs[item.key] = item.value)
+                    const provider = dbConfigs.ai_provider || configData.ai_provider
+                    configData = {
+                        ai_provider: provider,
+                        api_key: dbConfigs[`${provider}_api_key`] || configData.api_key,
+                        model: dbConfigs[`${provider}_model`] || configData.model,
+                        system_prompt: dbConfigs[`${provider}_system_prompt`] || configData.system_prompt,
+                        ai_prefix: dbConfigs.ai_prefix || configData.ai_prefix,
+                        ai_bot_enabled: dbConfigs.ai_bot_enabled === 'true'
+                    }
+                    console.log(`✅ [Admin] Configs de IA carregadas do DB. Provedor: ${configData.ai_provider}`)
+                } else {
+                    console.log(`⚠️ [Admin] Usando configs hardcoded (DB vazio ou erro). Provedor: ${configData.ai_provider}`)
+                }
+            } catch (dbErr) {
+                console.log(`⚠️ [Admin] DB indisponível, usando hardcoded: ${dbErr?.message}`)
             }
         } else {
             // Tenants usam a nova tabela 'whatsapp_tenant_configs'
@@ -240,10 +265,10 @@ async function loadTenantAIConfigs(tenantId) {
             
             configData = {
                 ai_provider: data?.ai_provider || 'gemini',
-                api_key: data?.api_key || "",
-                model: data?.model || "",
-                system_prompt: data?.system_prompt || "Você é o assistente virtual da Red Comercial.",
-                ai_prefix: data?.ai_prefix || "",
+                api_key: data?.api_key || '',
+                model: data?.model || '',
+                system_prompt: data?.system_prompt || 'Você é o assistente virtual da Red Comercial.',
+                ai_prefix: data?.ai_prefix || '',
                 ai_bot_enabled: data?.ai_enabled === true // Corrigido para 'ai_enabled' (coluna da tabela)
             }
         }
@@ -257,12 +282,13 @@ async function loadTenantAIConfigs(tenantId) {
         console.error(`Erro ao carregar configs de IA para Tenant ${tenantId}:`, err)
         const session = sessions.get(tenantId)
         if (session) {
-            session.aiConfigs = { // Fallback para configs padrão
+            // Para admin: usa hardcoded. Para tenants: usa fallback padrão
+            session.aiConfigs = tenantId === 'admin' ? { ...ADMIN_CONFIGS } : {
                 ai_provider: 'gemini',
-                api_key: process.env.GEMINI_API_KEY || "",
-                model: "gemini-1.5-flash",
-                system_prompt: "Você é um assistente virtual prestativo e descontraído.",
-                ai_prefix: "",
+                api_key: process.env.GEMINI_API_KEY || '',
+                model: 'gemini-1.5-flash',
+                system_prompt: 'Você é um assistente virtual prestativo e descontraído.',
+                ai_prefix: '',
                 ai_bot_enabled: false
             }
         }
