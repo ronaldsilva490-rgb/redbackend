@@ -583,18 +583,27 @@ def whatsapp_send():
 @require_admin
 def whatsapp_start():
     """Inicia o microserviço para a sessão 'admin'."""
-    import os
+    import os, time
     node_url = os.environ.get('WHATSAPP_SERVICE_URL', 'http://localhost:3001')
-    try:
-        resp = requests.post(f"{node_url}/start/admin", timeout=15)
+    
+    # Retenta até 3 vezes caso o microserviço esteja em "cold start"
+    for i in range(3):
         try:
-            data = resp.json()
-        except:
-            data = {"message": resp.text}
-        
-        return success(data), resp.status_code
-    except Exception as e:
-        return error(f"Falha na comunicação com microserviço: {str(e)}", 500)
+            resp = requests.post(f"{node_url}/start/admin", timeout=10)
+            try:
+                data = resp.json()
+            except:
+                data = {"message": resp.text}
+            return success(data, status=resp.status_code)
+        except requests.exceptions.ConnectionError:
+            if i < 2:
+                time.sleep(2) # Espera o boot do Node.js
+                continue
+            return success({"status": "starting", "message": "Microserviço em boot. Aguarde o QR Code."})
+        except Exception as e:
+            return error(f"Falha na comunicação com microserviço: {str(e)}", 500)
+    
+    return error("Microserviço não respondeu após várias tentativas.", 504)
 
 @admin_bp.post("/whatsapp/stop")
 @require_admin
@@ -603,13 +612,14 @@ def whatsapp_stop():
     import os
     node_url = os.environ.get('WHATSAPP_SERVICE_URL', 'http://localhost:3001')
     try:
-        resp = requests.post(f"{node_url}/stop/admin", timeout=15)
+        resp = requests.post(f"{node_url}/stop/admin", timeout=10)
         try:
             data = resp.json()
         except:
             data = {"message": resp.text}
-            
-        return success(data), resp.status_code
+        return success(data, status=resp.status_code)
+    except requests.exceptions.ConnectionError:
+        return success({"message": "Serviço já estava offline ou em boot."})
     except Exception as e:
         return error(f"Falha na comunicação com microserviço: {str(e)}", 500)
 
