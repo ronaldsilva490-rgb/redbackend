@@ -140,12 +140,15 @@ async function connectToWhatsApp(tenantId) {
             const isReplyToMe = !!(contextInfo?.participant?.includes(botId) || (botLidShort && contextInfo?.participant?.includes(botLidShort)))
             
             // Verificação de Palavra-Chave (ai_prefix agora é tenant-specific)
-            const keyword = session.aiConfigs?.ai_prefix?.trim().toLowerCase()
-            const containsKeyword = keyword && content.toLowerCase().includes(keyword)
+            const keyword = session.aiConfigs?.ai_prefix?.trim() || ""
+            const normalizeText = (text) => text ? text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase() : ""
+            const normContent = normalizeText(content)
+            const normKeyword = normalizeText(keyword)
+            const containsKeyword = Boolean(normKeyword && normContent.includes(normKeyword))
 
             if (isGroup) {
                 console.log(`📩 [DEBUG GRUPO - Tenant ${tenantId}] text: "${content.substring(0,30)}..."`)
-                console.log(`   - isMentioned: ${isMentioned}, isReplyToMe: ${isReplyToMe}, containsKeyword: ${containsKeyword}`)
+                console.log(`   - isMentioned: ${isMentioned}, isReplyToMe: ${isReplyToMe}, containsKeyword: ${containsKeyword}, keywordSetada: "${keyword}"`)
             }
 
             // Responde se: Ativo + (PV ou Menção ou Resposta ou Keyword)
@@ -157,9 +160,10 @@ async function connectToWhatsApp(tenantId) {
                 if (botLidShort) {
                     cleanText = cleanText.replace(new RegExp(`@${botLidShort}`, 'g'), '').trim()
                 }
-                if (containsKeyword) {
+                if (containsKeyword && keyword) {
                     // Remove a palavra-chave (case-insensitive) em qualquer lugar
-                    cleanText = cleanText.replace(new RegExp(keyword, 'gi'), '').trim()
+                    const escapedKeyword = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+                    cleanText = cleanText.replace(new RegExp(escapedKeyword, 'gi'), '').trim()
                 }
 
                 // Monta Contexto Dinâmico (RAG)
@@ -247,22 +251,22 @@ async function loadTenantAIConfigs(tenantId) {
 async function getTenantContext(tenantId) {
     try {
         // Busca dados básicos do tenant
-        const { data: tenant, error: tenantError } = await supabase.from('tenants').select('name, description, type, address, city').eq('id', tenantId).single()
+        const { data: tenant, error: tenantError } = await supabase.from('tenants').select('nome, descricao, tipo, endereco, cidade').eq('id', tenantId).single()
         if (tenantError) throw tenantError
         
         // Busca produtos/cardápio/serviços (Simplificado)
-        const { data: products, error: productsError } = await supabase.from('products').select('name, price, stock').eq('tenant_id', tenantId).limit(20)
+        const { data: products, error: productsError } = await supabase.from('products').select('nome, preco, estoque_atual').eq('tenant_id', tenantId).limit(20)
         if (productsError) console.error("Erro ao buscar produtos:", productsError) // Não impede o contexto de ser gerado
 
-        let context = `Nome da Empresa: ${tenant?.name || 'Empresa'}\n`
-        context += `Ramo de Atividade: ${tenant?.type || 'Comércio'}\n`
-        context += `Descrição da Empresa: ${tenant?.description || ''}\n`
-        context += `Endereço: ${tenant?.address || ''}, ${tenant?.city || ''}\n`
+        let context = `Nome da Empresa: ${tenant?.nome || 'Empresa'}\n`
+        context += `Ramo de Atividade: ${tenant?.tipo || 'Comércio'}\n`
+        context += `Descrição da Empresa: ${tenant?.descricao || ''}\n`
+        context += `Endereço: ${tenant?.endereco || ''}, ${tenant?.cidade || ''}\n`
         
         if (products && products.length > 0) {
             context += `\nPRODUTOS/SERVIÇOS DISPONÍVEIS:\n`
             products.forEach(p => {
-                context += `- ${p.name}: R$ ${p.price ? p.price.toFixed(2) : 'Sob consulta'} (Estoque: ${p.stock || 'Sob consulta'})\n`
+                context += `- ${p.nome}: R$ ${p.preco ? p.preco.toFixed(2) : 'Sob consulta'} (Estoque: ${p.estoque_atual || 'Sob consulta'})\n`
             })
         }
         
