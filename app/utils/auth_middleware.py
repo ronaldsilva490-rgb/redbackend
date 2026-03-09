@@ -70,7 +70,7 @@ def require_auth(f):
 
             try:
                 tenant_resp = sb.table("tenant_users") \
-                    .select("tenant_id, papel") \
+                    .select("id, tenant_id, papel") \
                     .eq("user_id", user_id) \
                     .eq("ativo", True) \
                     .limit(1) \
@@ -78,7 +78,7 @@ def require_auth(f):
             except Exception:
                 # Fallback: coluna 'ativo' pode não existir ainda (migration pendente)
                 tenant_resp = sb.table("tenant_users") \
-                    .select("tenant_id, papel") \
+                    .select("id, tenant_id, papel") \
                     .eq("user_id", user_id) \
                     .limit(1) \
                     .execute()
@@ -88,12 +88,14 @@ def require_auth(f):
 
             tenant_id = tenant_resp.data[0]["tenant_id"]
             papel     = tenant_resp.data[0]["papel"]
+            tu_id     = tenant_resp.data[0].get("id")
 
             current_user = {"id": user_id, "email": user_resp.user.email}
             request.user      = {"sub": user_id, "email": user_resp.user.email}
             request.user_id   = user_id
             request.tenant_id = tenant_id
             request.papel     = papel
+            request.tenant_user_id = tu_id
 
         except Exception:
             return jsonify({"error": "Token inválido ou expirado"}), 401

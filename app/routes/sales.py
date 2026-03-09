@@ -173,7 +173,7 @@ def create_sale():
         "tenant_id":        tid,
         "vehicle_id":       body["vehicle_id"],
         "client_id":        body["client_id"],
-        "vendedor_id":      getattr(request, "user_id", None),
+        "vendedor_id":      getattr(request, "tenant_user_id", None) or getattr(request, "user_id", None),
         "valor_venda":      valor_venda,
         "valor_entrada":    valor_entrada,
         "financiamento":    financiamento,
