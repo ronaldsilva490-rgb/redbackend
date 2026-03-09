@@ -25,10 +25,10 @@ const ADMIN_TENANT_ID = process.env.ADMIN_TENANT_ID || 'admin'
 // ── Gerenciador de Sessões (Multi-Tenant) ──
 const sessions = new Map()
 
-// ── Memória Contínua em RAM (Rolling Summary) ──
-// Map: group_id -> { tenantId, messages: [ { author, text } ] }
-const groupMessageBuffers = new Map()
-const MAX_BUFFER_MESSAGES = 5 // Reduzido para 5 para facilitar testes imediatos
+// ── Memória Contínua em RAM (Rolling Summary & Learning) ──
+// Map: conversation_id -> { tenantId, messages: [ { author, authorJid, text } ] }
+const conversationBuffers = new Map()
+const MAX_BUFFER_MESSAGES = 5 // Resumo e aprendizado a cada 5 mensagens
 
 // ── Prevenção de crash silencioso do processo Node ──
 process.on('uncaughtException', (err) => {
@@ -189,35 +189,35 @@ async function connectToWhatsApp(tenantId) {
                 console.log(`[CHECK] Tenant: ${tenantId} | Bot Ativo: ${configs.ai_bot_enabled} | Keyword: "${keyword}" | Encontrou: ${containsKeyword}`)
             }
 
-            // ───────────────── MEMÓRIA DE GRUPOS (Rolling Summary) ─────────────────
+            // ───────────────── SISTEMA DE APRENDIZADO (Rolling Summary & Profiling) ─────────────────
             const author = msg.pushName || (msg.key.remoteJid.split('@')[0])
+            const authorJid = msg.key.participant || msg.key.remoteJid // JID real de quem enviou
             
-            if (isGroup && content) {
+            if (content) {
                 const bufferKey = `${tenantId}_${remoteJid}`
-                if (!groupMessageBuffers.has(bufferKey)) {
-                    groupMessageBuffers.set(bufferKey, { tenantId, messages: [] })
+                if (!conversationBuffers.has(bufferKey)) {
+                    conversationBuffers.set(bufferKey, { tenantId, messages: [] })
                 }
-                const buffer = groupMessageBuffers.get(bufferKey)
+                const buffer = conversationBuffers.get(bufferKey)
                 
-                // Limpa marcações e salva no buffer de curto prazo
+                // Limpa marcações e salva no buffer
                 let textForBuffer = content.replace(/@\d+/g, '').trim()
                 if (textForBuffer.length > 2) {
-                    buffer.messages.push({ author, text: textForBuffer })
-                    console.log(`[BUFFER] Mensagem adicionada ao buffer do grupo ${remoteJid} (${buffer.messages.length}/${MAX_BUFFER_MESSAGES})`)
+                    buffer.messages.push({ author, authorJid, text: textForBuffer })
+                    console.log(`[LEARN BUFFER] Mensagem de ${author} (${authorJid}) adicionada para ${remoteJid} (${buffer.messages.length}/${MAX_BUFFER_MESSAGES})`)
                 }
 
-                // Gatilho: Se atingiu o limite, dispara sumarização silenciosa background
+                // Gatilho: Se atingiu o limite, dispara aprendizado em background
                 if (buffer.messages.length >= MAX_BUFFER_MESSAGES) {
-                    console.log(`[BUFFER] 🚀 Limite atingido para ${remoteJid}. Disparando sumarização...`)
-                    const messagesToSummarize = [...buffer.messages]
-                    buffer.messages = [] // Limpa a RAM imediatamente
-                    // Executa a função sem dar await, não bloqueia o fluxo de mensagens
-                    summarizeGroupContext(tenantId, remoteJid, messagesToSummarize, session.aiConfigs).catch(err => {
-                        console.error(`[BG RUNNER] Erro de sumarização (Grupo ${remoteJid}):`, err?.message)
+                    console.log(`[LEARN] 🚀 Limite atingido para ${remoteJid}. Analisando conversa...`)
+                    const messagesToAnalyze = [...buffer.messages]
+                    buffer.messages = [] 
+                    learnFromConversation(tenantId, remoteJid, messagesToAnalyze, session.aiConfigs).catch(err => {
+                        console.error(`[BG LEARN] Erro ao aprender com a conversa ${remoteJid}:`, err?.message)
                     })
                 }
             }
-            // ───────────────────────────────────────────────────────────────────────
+            // ─────────────────────────────────────────────────────────────────────────
 
             if (isGroup) {
                 console.log(`📩 [DEBUG GRUPO - Tenant ${tenantId}] text: "${content.substring(0, 30)}..."`)
@@ -240,37 +240,42 @@ async function connectToWhatsApp(tenantId) {
                     cleanText = cleanText.replace(new RegExp(escapedKeyword, 'gi'), '').trim()
                 }
 
-                // Monta Contexto Dinâmico (RAG)
-                const systemPrompt = session.aiConfigs.system_prompt || "Você é um assistente virtual prestativo e descontraído."
-                let fullPrompt = ""
+                // Busca Memória e Perfis (RAG Evoluído)
+                let conversationMemory = ""
+                let senderProfile = ""
                 
-                // Busca resumo contínuo (se for grupo)
-                let groupMemory = ""
-                if (isGroup) {
-                    try {
-                        const { data: mem, error: memErr } = await supabase.from('whatsapp_group_contexts')
-                            .select('summary').eq('tenant_id', tenantId).eq('group_id', remoteJid).single()
-                        
-                        if (memErr && memErr.code !== 'PGRST116') {
-                            console.error(`[QUERY MEMORY] Erro ao buscar memória do grupo:`, memErr.message)
-                        }
+                try {
+                    // 1. Busca resumo da conversa
+                    const { data: convData } = await supabase.from('whatsapp_conversation_contexts')
+                        .select('summary').eq('tenant_id', tenantId).eq('conversation_id', remoteJid).single()
+                    if (convData?.summary) {
+                        conversationMemory = `\n\n[CONTEXTO DA CONVERSA: ${convData.summary}]`
+                    }
 
-                        if (mem?.summary) {
-                            console.log(`[QUERY MEMORY] ✅ Memória encontrada para ${remoteJid}: "${mem.summary.substring(0, 30)}..."`)
-                            groupMemory = `\n\n[MEMÓRIA DO GRUPO (Resumo das últimas conversas): ${mem.summary}]`
-                        } else {
-                            console.log(`[QUERY MEMORY] ℹ️ Nenhuma memória salva ainda para o grupo ${remoteJid}`)
-                        }
-                    } catch (e) { /* ignore */ }
+                    // 2. Busca perfil de quem está falando agora
+                    const senderJid = msg.key.participant || msg.key.remoteJid
+                    const { data: profData } = await supabase.from('whatsapp_contact_profiles')
+                        .select('*').eq('tenant_id', tenantId).eq('contact_id', senderJid).single()
+                    if (profData) {
+                        senderProfile = `\n\n[PERFIL DO INTERLOCUTOR: Nome: ${profData.full_name || 'Desconhecido'}, Apelido: ${profData.nickname || 'Nenhum'}, Traços: ${profData.traits || 'Não identificados'}]`
+                        console.log(`[RAG] 👤 Conhecimento sobre ${senderJid} injetado (Apelido: ${profData.nickname})`)
+                    } else {
+                        console.log(`[RAG] 👤 Nenhum perfil específico para ${senderJid} ainda.`)
+                    }
+                } catch (e) { 
+                    console.error(`[RAG ERROR] Falha ao buscar dados de memória/perfil:`, e.message)
                 }
+
+                const contextCombined = `${conversationMemory}${senderProfile}`
+                console.log(`[RAG] 🧩 Contexto combinado pronto (${contextCombined.length} chars)`)
 
                 if (tenantId === ADMIN_TENANT_ID) {
                     // Admin: sem injeção de contexto de empresa, só prompt, memória e mensagem
-                    fullPrompt = `INSTRUÇÕES:\n${systemPrompt}${groupMemory}\n\nPERGUNTA DO CLIENTE: ${cleanText || "Oi!"}`
+                    fullPrompt = `INSTRUÇÕES:\n${systemPrompt}${contextCombined}\n\nPERGUNTA DO CLIENTE: ${cleanText || "Oi!"}`
                 } else {
                     // Tenant: RAG completo com contexto de empresa
                     const businessContext = await getTenantContext(tenantId)
-                    fullPrompt = `CONTEXTO DA EMPRESA:\n${businessContext}\n\nINSTRUÇÕES:\n${systemPrompt}${groupMemory}\n\nPERGUNTA DO CLIENTE: ${cleanText || "Oi!"}`
+                    fullPrompt = `CONTEXTO DA EMPRESA:\n${businessContext}\n\nINSTRUÇÕES:\n${systemPrompt}${contextCombined}\n\nPERGUNTA DO CLIENTE: ${cleanText || "Oi!"}`
                 }
 
                 try {
@@ -292,61 +297,85 @@ async function connectToWhatsApp(tenantId) {
 
 // ── Funções de IA (Adaptadas para Multi-Tenant) ──
 
-async function summarizeGroupContext(tenantId, groupId, newMessages, aiConfigs) {
-    if (!aiConfigs || !aiConfigs.api_key) {
-        console.error(`[RAG BG] ❌ Erro: API Key não configurada para Tenant ${tenantId}. Abortando sumarização.`)
-        return
-    }
-    console.log(`[RAG BG] 🧠 Iniciando sumarização para o grupo ${groupId} (Tenant ${tenantId})`)
+async function learnFromConversation(tenantId, conversationId, newMessages, aiConfigs) {
+    if (!aiConfigs || !aiConfigs.api_key) return
+    console.log(`[LEARN] 🧠 Analisando ${conversationId} (Tenant ${tenantId})`)
     
     try {
         // 1. Puxa contexto atual
-        const { data: currentContext, error: fetchErr } = await supabase.from('whatsapp_group_contexts')
-            .select('summary').eq('tenant_id', tenantId).eq('group_id', groupId).single()
-        
-        if (fetchErr && fetchErr.code !== 'PGRST116') {
-            console.error(`[RAG BG] Erro ao buscar resumo atual do DB:`, fetchErr.message)
-        }
+        const { data: currentContext } = await supabase.from('whatsapp_conversation_contexts')
+            .select('summary').eq('tenant_id', tenantId).eq('conversation_id', conversationId).single()
         
         let oldSummary = currentContext?.summary || "Nenhuma conversa gravada."
 
-        // 2. Transcreve mensagens
-        let transcript = newMessages.map(m => `${m.author}: ${m.text}`).join('\n')
-        console.log(`[RAG BG] Mensagens para sumarizar:\n${transcript}`)
+        // 2. Transcreve mensagens (incluindo JID para aprender quem é quem)
+        let transcript = newMessages.map(m => `${m.author} (${m.authorJid}): ${m.text}`).join('\n')
 
-        // 3. Monta prompt super compactador
-        const prompt = `NOVAS MENSAGENS NESTE EXATO MOMENTO:
+        // 3. Prompt de Inteligência Social (Extrai Resumo E Perfis)
+        const prompt = `Você é um Analista de Dinâmica Social. Analise as mensagens abaixo.
+RESUMO ANTERIOR DA CONVERSA: "${oldSummary}"
+NOVAS MENSAGENS:
 ${transcript}
 
-Sua tarefa: Reescreva o RESUMO ATUAL do grupo. Mantenha os tópicos cruciais do resumo antigo e insira os novos assuntos falados agora. Remova informações velhas que não importam mais. Seja ultracompacto (máximo de 120 palavras). Foque apenas no que foi discutido e qual é o assunto atual.
-RESUMO ANTIGO PARA REFERÊNCIA: "${oldSummary}"`
+Sua tarefa é retornar um JSON (APENAS O JSON) com:
+1. "summary": Um novo resumo ultracompacto (max 120 palavras) unindo o antigo e o novo. Se for PV, foque no estágio da conversa. Se for grupo, foque nos tópicos.
+2. "profiles": Uma lista de objetos { "jid": string, "nickname": string, "traits": string, "full_name": string } para cada pessoa que você conseguir identificar um apelido ou traço de personalidade agora. Se não identificar nada novo de alguém, não inclua no JSON.
 
-        // 4. Bate na IA (com prompt de sistema neutro para não misturar com a personalidade do bot)
-        console.log(`[RAG BG] Solicitando novo resumo à IA (${aiConfigs.ai_provider})...`)
-        const summarizerSystemPrompt = "Você é um analisador de logs e conversas. Seu objetivo é criar resumos técnicos e compactos de tópicos discutidos, sem saudações ou comentários."
-        const newSummary = await getAIResponse(prompt, aiConfigs, summarizerSystemPrompt)
+Retorne APENAS o JSON no formato: { "summary": "...", "profiles": [...] }`
+
+        const aiResponse = await getAIResponse(prompt, aiConfigs, "Você é um analista técnico de dados. Responda apenas com JSON puro.")
         
-        if (newSummary && newSummary.length > 5) {
-            console.log(`[RAG BG] Novo resumo gerado: "${newSummary.substring(0, 50)}..."`)
-            // 5. Salva no banco (Upsert)
-            const { error: dbErr } = await supabase.from('whatsapp_group_contexts').upsert({
-                tenant_id: tenantId,
-                group_id: groupId,
-                summary: newSummary.trim(),
-                updated_at: new Date()
-            }, { onConflict: 'tenant_id, group_id' })
-            
-            if (dbErr) {
-                console.error(`[RAG BG] ❌ Erro ao gravar no Supabase:`, dbErr.message)
-                console.error(`[RAG BG] Detalhes do erro:`, JSON.stringify(dbErr))
-            } else {
-                console.log(`[RAG BG] ✅ Sucesso! Resumo persistido no banco para o grupo ${groupId}`)
+        if (aiResponse) {
+            try {
+                // Limpa possíveis marcações de markdown do JSON
+                const cleanJson = aiResponse.replace(/```json|```/g, '').trim()
+                const result = JSON.parse(cleanJson)
+
+                // 4. Salva Resumo da Conversa
+                if (result.summary) {
+                    await supabase.from('whatsapp_conversation_contexts').upsert({
+                        tenant_id: tenantId,
+                        conversation_id: conversationId,
+                        summary: result.summary,
+                        updated_at: new Date()
+                    }, { onConflict: 'tenant_id, conversation_id' })
+                    console.log(`[LEARN] ✅ Resumo da conversa ${conversationId} atualizado.`)
+                }
+
+                // 5. Salva Perfis dos Contatos
+                if (result.profiles && Array.isArray(result.profiles)) {
+                    console.log(`[LEARN] 👥 Identificados ${result.profiles.length} perfis para atualizar...`)
+                    for (const profile of result.profiles) {
+                        if (profile.jid) {
+                            console.log(`[LEARN] 🔄 Atualizando perfil de ${profile.jid} (Apelido: ${profile.nickname})`)
+                            await supabase.from('whatsapp_contact_profiles').upsert({
+                                tenant_id: tenantId,
+                                contact_id: profile.jid,
+                                full_name: profile.full_name || null,
+                                nickname: profile.nickname || null,
+                                traits: profile.traits || null,
+                                updated_at: new Date()
+                            }, { onConflict: 'tenant_id, contact_id' })
+                        }
+                    }
+                    console.log(`[LEARN] ✅ Todos os perfis de contatos foram processados.`)
+                }
+            } catch (jsonErr) {
+                console.warn(`[LEARN] ⚠️ Erro ao processar JSON da IA:`, jsonErr.message)
+                console.log(`[LEARN] Resposta bruta que causou erro:`, aiResponse)
+                // Fallback: se o JSON falhou mas temos texto, tenta salvar como resumo simples
+                if (aiResponse.length > 10 && aiResponse.length < 500) {
+                     await supabase.from('whatsapp_conversation_contexts').upsert({
+                        tenant_id: tenantId,
+                        conversation_id: conversationId,
+                        summary: aiResponse.trim(),
+                        updated_at: new Date()
+                    }, { onConflict: 'tenant_id, conversation_id' })
+                }
             }
-        } else {
-            console.warn(`[RAG BG] ⚠️ Resumo retornado pela IA é inválido ou muito curto.`)
         }
     } catch (err) {
-        console.error(`[RAG BG] ❌ Falha crítica na sumarização:`, err)
+        console.error(`[LEARN] ❌ Erro crítico no aprendizado:`, err)
     }
 }
 
