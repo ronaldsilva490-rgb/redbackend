@@ -7,6 +7,7 @@ import os, time, jwt, bcrypt, requests
 from datetime import datetime, timezone, timedelta
 from functools import wraps
 from flask import Blueprint, request, jsonify
+from flask_cors import cross_origin
 from ..utils.supabase_client import get_supabase_admin
 from ..utils.response import success, error
 
@@ -507,6 +508,7 @@ def clear_logs():
 
 @admin_bp.post("/whatsapp/send")
 @require_admin
+@cross_origin()
 def whatsapp_send():
     """
     Dispara mensagens de teste utilizando a engine escolhida
@@ -581,6 +583,7 @@ def whatsapp_send():
 
 @admin_bp.get("/whatsapp/status")
 @require_admin
+@cross_origin()
 def whatsapp_status():
     """Consome o microserviço Node.js para relatar Status / Base64-QR"""
     import os
@@ -597,6 +600,7 @@ def whatsapp_status():
 
 @admin_bp.get("/whatsapp/groups")
 @require_admin
+@cross_origin()
 def whatsapp_groups():
     """Consome o microserviço Node.js para relatar a listagem de Grupos do WhatsApp"""
     import os
