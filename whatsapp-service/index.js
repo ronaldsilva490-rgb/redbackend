@@ -31,6 +31,7 @@ let aiConfigs = {
     openrouter_api_key: "",
     openrouter_model: "",
     gemini_system_prompt: "Você é o assistente virtual da Red Comercial. Responda de forma prestativa e descontraída.",
+    ai_prefix: "",
     ai_bot_enabled: "false"
 }
 let genAI = null
@@ -198,20 +199,26 @@ async function connectToWhatsApp() {
             )
             const isReplyToMe = !!(contextInfo?.participant?.includes(botId) || (botLidShort && contextInfo?.participant?.includes(botLidShort)))
             
+            // Verificação de Prefixo (Case Insensitive)
+            const prefix = aiConfigs.ai_prefix?.trim().toLowerCase()
+            const startsWithPrefix = prefix && content.toLowerCase().startsWith(prefix)
+
             if (isGroup) {
                 console.log(`📩 [DEBUG GRUPO] text: "${content.substring(0,30)}..."`)
-                console.log(`   - mentionedJid: ${JSON.stringify(contextInfo?.mentionedJid)}`)
-                console.log(`   - isMentioned: ${isMentioned}, isReplyToMe: ${isReplyToMe}`)
+                console.log(`   - isMentioned: ${isMentioned}, isReplyToMe: ${isReplyToMe}, startsWithPrefix: ${startsWithPrefix}`)
             }
 
-            // Responde se: 1. Bot Ativo | 2. PV | 3. Grupo + Menção | 4. Grupo + Resposta ao Bot
-            if (aiConfigs.ai_bot_enabled === 'true' && (!isGroup || isMentioned || isReplyToMe)) {
+            // Responde se: 1. Bot Ativo | 2. PV | 3. Grupo + Menção | 4. Grupo + Resposta ao Bot | 5. Prefixo
+            if (aiConfigs.ai_bot_enabled === 'true' && (!isGroup || isMentioned || isReplyToMe || startsWithPrefix)) {
                 console.log(`🤖 IA: Processando mensagem de ${remoteJid}`)
                 
-                // Limpa tanto o JID quanto o LID do texto
+                // Limpa tanto o JID quanto o LID do texto, e também o prefixo
                 let cleanText = content.replace(new RegExp(`@${botId}`, 'g'), '').trim()
                 if (botLidShort) {
                     cleanText = cleanText.replace(new RegExp(`@${botLidShort}`, 'g'), '').trim()
+                }
+                if (startsWithPrefix) {
+                    cleanText = cleanText.substring(prefix.length).trim()
                 }
                 
                 const response = await getAIResponse(cleanText || "Oi!")
