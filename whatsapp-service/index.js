@@ -199,9 +199,17 @@ async function connectToWhatsApp(tenantId) {
                 }
 
                 // Monta Contexto Dinâmico (RAG)
-                const businessContext = await getTenantContext(tenantId)
                 const systemPrompt = session.aiConfigs.system_prompt || "Você é um assistente virtual prestativo e descontraído."
-                const fullPrompt = `CONTEXTO DA EMPRESA:\n${businessContext}\n\nINSTRUÇÕES:\n${systemPrompt}\n\nPERGUNTA DO CLIENTE: ${cleanText || "Oi!"}`
+                let fullPrompt = ""
+
+                if (tenantId === ADMIN_TENANT_ID) {
+                    // Admin: sem injeção de contexto de empresa, só prompt e mensagem
+                    fullPrompt = `INSTRUÇÕES:\n${systemPrompt}\n\nPERGUNTA DO CLIENTE: ${cleanText || "Oi!"}`
+                } else {
+                    // Tenant: RAG completo
+                    const businessContext = await getTenantContext(tenantId)
+                    fullPrompt = `CONTEXTO DA EMPRESA:\n${businessContext}\n\nINSTRUÇÕES:\n${systemPrompt}\n\nPERGUNTA DO CLIENTE: ${cleanText || "Oi!"}`
+                }
 
                 try {
                     const response = await getAIResponse(fullPrompt, session.aiConfigs)
@@ -280,6 +288,7 @@ async function loadTenantAIConfigs(tenantId) {
 }
 
 async function getTenantContext(tenantId) {
+    if (tenantId === ADMIN_TENANT_ID) return ""
     try {
         // Busca dados básicos do tenant
         const { data: tenant, error: tenantError } = await supabase.from('tenants').select('nome, descricao, tipo, endereco, cidade').eq('id', tenantId).single()
