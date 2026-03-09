@@ -17,156 +17,85 @@ const supabase = createClient(
     process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_KEY || ""
 )
 
-let sock = null
-let currentQr = null
-let qrStatus = 'disconnected' 
+// ── Gerenciador de Sessões (Multi-Tenant) ──
+const sessions = new Map() // tenantId -> { sock, aiConfigs, lastQr }
 
-// ── Estado da IA em Memória ──
-let aiConfigs = {
-    ai_provider: 'gemini',
-    gemini_api_key: process.env.GEMINI_API_KEY || "",
-    gemini_model: "",
-    groq_api_key: "",
-    groq_model: "",
-    openrouter_api_key: "",
-    openrouter_model: "",
-    gemini_system_prompt: "Você é o assistente virtual da Red Comercial. Responda de forma prestativa e descontraída.",
-    ai_prefix: "",
-    ai_bot_enabled: "false"
-}
-let genAI = null
-let aiModel = null
+// Variáveis globais antigas removidas ou adaptadas para o modelo multi-tenant
+// let sock = null
+// let currentQr = null
+// let qrStatus = 'disconnected'
 
-async function loadAIConfigs() {
-    try {
-        const { data, error } = await supabase.from('ai_configs').select('*')
-        if (!error && data) {
-            data.forEach(item => {
-                aiConfigs[item.key] = item.value
-            })
-            console.log('✅ Configurações de IA carregadas do Banco de Dados.')
-            initAIModel()
-        }
-    } catch (err) {
-        console.error('Erro ao carregar configs de IA:', err)
+// ── Funções de Conexão WhatsApp (Multi-Tenant) ──
+async function connectToWhatsApp(tenantId) {
+    console.log(`📡 Iniciando Conexão para Tenant: ${tenantId}`)
+    const authPath = path.join(__dirname, `auth_info_baileys/tenant_${tenantId}`)
+    // Garante que o diretório de autenticação exista
+    if (!fs.existsSync(authPath)) {
+        fs.mkdirSync(authPath, { recursive: true })
     }
-}
+    const { state, saveCreds } = await useMultiFileAuthState(authPath)
+    const { version, isLatest } = await fetchLatestBaileysVersion() // Fetch version for each connection
 
-function initAIModel() {
-    const provider = aiConfigs.ai_provider || 'gemini'
-    console.log(`🤖 Inicializando Provedor de IA: ${provider}`)
-    
-    if (provider === 'gemini') {
-        if (aiConfigs.gemini_api_key && aiConfigs.gemini_model) {
-            genAI = new GoogleGenerativeAI(aiConfigs.gemini_api_key)
-            aiModel = genAI.getGenerativeModel({ 
-                model: aiConfigs.gemini_model,
-                systemInstruction: aiConfigs.gemini_system_prompt
-            })
-        } else {
-            aiModel = null
-        }
-    } else {
-        // Para Groq e OpenRouter, não usamos SDK específico aqui (usamos fetch no call)
-        aiModel = provider 
-    }
-}
-
-async function getAIResponse(text) {
-    const provider = aiConfigs.ai_provider || 'gemini'
-    try {
-        if (!aiModel) return null
-
-        if (provider === 'gemini') {
-            const result = await aiModel.generateContent(text)
-            return result.response.text()
-        } 
-        
-        // Lógica para Groq e OpenRouter via Fetch (OpenAI Compatible)
-        let apiUrl = ""
-        let apiKey = ""
-        let model = ""
-        
-        if (provider === 'groq') {
-            apiUrl = "https://api.groq.com/openai/v1/chat/completions"
-            apiKey = aiConfigs.groq_api_key
-            model = aiConfigs.groq_model
-        } else if (provider === 'openrouter') {
-            apiUrl = "https://openrouter.ai/api/v1/chat/completions"
-            apiKey = aiConfigs.openrouter_api_key
-            model = aiConfigs.openrouter_model
-        }
-
-        if (!apiKey || !model) return null
-
-        const response = await fetch(apiUrl, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${apiKey}`,
-                'HTTP-Referer': 'https://redcomercial.com.br', // Recomendado pelo OpenRouter
-                'X-Title': 'Red Comercial Bot'
-            },
-            body: JSON.stringify({
-                model: model,
-                messages: [
-                    { role: "system", content: aiConfigs.gemini_system_prompt },
-                    { role: "user", content: text }
-                ]
-            })
-        })
-
-        const data = await response.json()
-        return data.choices?.[0]?.message?.content || null
-
-    } catch (err) {
-        console.error(`Erro na IA (${provider}):`, err)
-        return "Eita, deu um revertério aqui na minha cabeça agora! Tenta de novo mais tarde, viu? 🤯"
-    }
-}
-
-async function connectToWhatsApp() {
-    const { state, saveCreds } = await useMultiFileAuthState('/data/auth_info_baileys')
-    const { version, isLatest } = await fetchLatestBaileysVersion()
-    console.log(`Usando WhatsApp Web v${version.join('.')} (Latest: ${isLatest})`)
-    
-    sock = makeWASocket({
-        version,
+    const sock = makeWASocket({
+        version, // Usar a versão mais recente
         auth: state,
-        logger: pino({ level: 'info' }),
-        printQRInTerminal: true,
-        browser: Browsers.macOS('Desktop')
+        printQRInTerminal: false, // QR codes serão retornados via API
+        browser: Browsers.macOS('Desktop'),
+        logger: pino({ level: 'silent' }) // Logger silencioso para evitar poluir o console
     })
+
+    const session = { sock, aiConfigs: null, lastQr: null, status: 'connecting' }
+    sessions.set(tenantId, session)
+
+    // Carrega configs de IA do Tenant
+    await loadTenantAIConfigs(tenantId)
 
     sock.ev.on('connection.update', async (update) => {
         const { connection, lastDisconnect, qr } = update
         
         if (qr) {
-            qrStatus = 'qrcode'
-            try {
-                currentQr = await QRCode.toDataURL(qr)
-                console.log('🔗 Novo QR Code gerado.')
-            } catch (err) {
-                console.error('Erro ao gerar base64', err)
-            }
+            session.lastQr = await QRCode.toDataURL(qr)
+            session.status = 'qrcode'
+            console.log(`🔗 Novo QR Code gerado para Tenant: ${tenantId}`)
+            await supabase.from('whatsapp_sessions').upsert({ 
+                tenant_id: tenantId, 
+                status: 'qrcode', 
+                qr: session.lastQr,
+                updated_at: new Date() 
+            }, { onConflict: 'tenant_id' })
         }
 
         if (connection === 'close') {
-            const shouldReconnect = (lastDisconnect.error)?.output?.statusCode !== DisconnectReason.loggedOut
-            console.log('🔴 Conexão encerrada. Reconectando:', shouldReconnect)
-            qrStatus = 'disconnected'
-            currentQr = null
-            if (shouldReconnect) connectToWhatsApp()
+            const shouldReconnect = (lastDisconnect?.error)?.output?.statusCode !== DisconnectReason.loggedOut
+            console.log(`❌ Conexão Fechada (Tenant: ${tenantId}). Reconectar: ${shouldReconnect}`)
+            session.status = 'disconnected'
+            session.lastQr = null
+            if (shouldReconnect) {
+                connectToWhatsApp(tenantId)
+            } else {
+                console.log(`🚫 Tenant ${tenantId} Deslogado. Limpando...`)
+                sessions.delete(tenantId)
+                await supabase.from('whatsapp_sessions').delete().eq('tenant_id', tenantId)
+                // Remove pasta de auth por segurança
+                fs.rmSync(authPath, { recursive: true, force: true })
+            }
         } else if (connection === 'open') {
-            console.log('🟢 WhatsApp Conectado!')
-            qrStatus = 'authenticated'
-            currentQr = null
+            console.log(`✅ Conexão Aberta (Tenant: ${tenantId})`)
+            session.status = 'authenticated'
+            session.lastQr = null
+            await supabase.from('whatsapp_sessions').upsert({ 
+                tenant_id: tenantId, 
+                status: 'authenticated', 
+                phone: sock.user.id,
+                qr: null,
+                updated_at: new Date() 
+            }, { onConflict: 'tenant_id' })
         }
     })
 
     sock.ev.on('creds.update', saveCreds)
 
-    // ── Listener de Mensagens (IA Bot) ──
+    // ── Listener de Mensagens (IA Bot Multi-Tenant) ──
     sock.ev.on('messages.upsert', async ({ messages, type }) => {
         if (type !== 'notify') return
         
@@ -175,7 +104,7 @@ async function connectToWhatsApp() {
         const botId = botNumber.split('@')[0].split(':')[0]
         const botLidShort = botLid.split('@')[0].split(':')[0]
         
-        console.log(`🤖 Bot ID: ${botNumber} | LID: ${botLid} | BotClean: ${botId} | LidClean: ${botLidShort}`)
+        console.log(`🤖 Bot ID (Tenant ${tenantId}): ${botNumber} | LID: ${botLid}`)
 
         for (const msg of messages) {
             if (!msg.message || msg.key.fromMe) continue
@@ -183,34 +112,43 @@ async function connectToWhatsApp() {
             const remoteJid = msg.key.remoteJid
             const isGroup = remoteJid.endsWith('@g.us')
             
-            // Extração resiliente de conteúdo e contexto
-            const m = msg.message
-            const content = m.conversation || m.extendedTextMessage?.text || m.imageMessage?.caption || m.videoMessage?.caption || 
-                          m.viewOnceMessage?.message?.imageMessage?.caption || m.viewOnceMessage?.message?.videoMessage?.caption ||
-                          m.viewOnceMessageV2?.message?.imageMessage?.caption || m.viewOnceMessageV2?.message?.videoMessage?.caption || ""
-            
-            const contextInfo = m.extendedTextMessage?.contextInfo || m.imageMessage?.contextInfo || m.videoMessage?.contextInfo ||
-                              m.viewOnceMessage?.message?.imageMessage?.contextInfo || m.viewOnceMessage?.message?.videoMessage?.contextInfo ||
-                              m.viewOnceMessageV2?.message?.imageMessage?.contextInfo || m.viewOnceMessageV2?.message?.videoMessage?.contextInfo
+            // Extração de Conteúdo (Suporta Ephemeral, ViewOnce, etc)
+            const msgType = Object.keys(msg.message)[0]
+            let content = ""
+            if (msgType === 'conversation') content = msg.message.conversation
+            else if (msgType === 'extendedTextMessage') content = msg.message.extendedTextMessage.text
+            else if (msgType === 'buttonsResponseMessage') content = msg.message.buttonsResponseMessage.selectedButtonId
+            else if (msgType === 'listResponseMessage') content = msg.message.listResponseMessage.singleSelectReply.selectedRowId
+            else if (msg.message[msgType]?.text) content = msg.message[msgType].text
+            else if (msg.message[msgType]?.caption) content = msg.message[msgType].caption
 
-            // Verifica menção pelo ID tradicional (JID) ou pelo novo LID
+            // Resiliência para contextInfo
+            const contextInfo = msg.message?.extendedTextMessage?.contextInfo || 
+                              msg.message?.imageMessage?.contextInfo || 
+                              msg.message?.videoMessage?.contextInfo ||
+                              msg.message?.ephemeralMessage?.message?.extendedTextMessage?.contextInfo ||
+                              msg.message?.viewOnceMessage?.message?.imageMessage?.contextInfo ||
+                              msg.message?.viewOnceMessage?.message?.videoMessage?.contextInfo ||
+                              msg.message?.viewOnceMessageV2?.message?.imageMessage?.contextInfo ||
+                              msg.message?.viewOnceMessageV2?.message?.videoMessage?.contextInfo
+
             const isMentioned = !!contextInfo?.mentionedJid?.some(jid => 
                 jid.includes(botId) || (botLidShort && jid.includes(botLidShort))
             )
             const isReplyToMe = !!(contextInfo?.participant?.includes(botId) || (botLidShort && contextInfo?.participant?.includes(botLidShort)))
             
-            // Verificação de Palavra-Chave (Qualquer lugar da frase)
-            const keyword = aiConfigs.ai_prefix?.trim().toLowerCase()
+            // Verificação de Palavra-Chave (ai_prefix agora é tenant-specific)
+            const keyword = session.aiConfigs?.ai_prefix?.trim().toLowerCase()
             const containsKeyword = keyword && content.toLowerCase().includes(keyword)
 
             if (isGroup) {
-                console.log(`📩 [DEBUG GRUPO] text: "${content.substring(0,30)}..."`)
+                console.log(`📩 [DEBUG GRUPO - Tenant ${tenantId}] text: "${content.substring(0,30)}..."`)
                 console.log(`   - isMentioned: ${isMentioned}, isReplyToMe: ${isReplyToMe}, containsKeyword: ${containsKeyword}`)
             }
 
-            // Responde se: 1. Bot Ativo | 2. PV | 3. Grupo + Menção | 4. Grupo + Resposta ao Bot | 5. Palavra-Chave
-            if (aiConfigs.ai_bot_enabled === 'true' && (!isGroup || isMentioned || isReplyToMe || containsKeyword)) {
-                console.log(`🤖 IA: Processando mensagem de ${remoteJid}`)
+            // Responde se: Ativo + (PV ou Menção ou Resposta ou Keyword)
+            if (session.aiConfigs?.ai_bot_enabled === true && (!isGroup || isMentioned || isReplyToMe || containsKeyword)) {
+                console.log(`🤖 IA (Tenant ${tenantId}): Processando mensagem de ${remoteJid}`)
                 
                 // Limpa JID, LID e Palavra-Chave do texto
                 let cleanText = content.replace(new RegExp(`@${botId}`, 'g'), '').trim()
@@ -221,8 +159,13 @@ async function connectToWhatsApp() {
                     // Remove a palavra-chave (case-insensitive) em qualquer lugar
                     cleanText = cleanText.replace(new RegExp(keyword, 'gi'), '').trim()
                 }
-                
-                const response = await getAIResponse(cleanText || "Oi!")
+
+                // Monta Contexto Dinâmico (RAG)
+                const businessContext = await getTenantContext(tenantId)
+                const systemPrompt = session.aiConfigs.system_prompt || "Você é um assistente virtual prestativo e descontraído."
+                const fullPrompt = `CONTEXTO DA EMPRESA:\n${businessContext}\n\nINSTRUÇÕES:\n${systemPrompt}\n\nPERGUNTA DO CLIENTE: ${cleanText || "Oi!"}`
+
+                const response = await getAIResponse(fullPrompt, session.aiConfigs)
                 if (response) {
                     await sock.sendMessage(remoteJid, { text: response }, { quoted: msg })
                 }
@@ -231,26 +174,172 @@ async function connectToWhatsApp() {
     })
 }
 
-// Inicializa no boot
-connectToWhatsApp()
-loadAIConfigs()
+// ── Funções de IA (Adaptadas para Multi-Tenant) ──
 
-// Endpoints
-app.get('/status', (req, res) => {
-    res.json({
-        status: qrStatus,
-        qr: currentQr,
-        ai: {
-            enabled: aiConfigs.ai_bot_enabled === 'true',
-            model: aiConfigs.gemini_model
+async function loadTenantAIConfigs(tenantId) {
+    try {
+        const { data, error } = await supabase.from('whatsapp_tenant_configs').select('*').eq('tenant_id', tenantId).maybe_single()
+        if (error) throw error
+        
+        const session = sessions.get(tenantId)
+        if (session) {
+            // Mapeia as chaves do banco de dados para o formato esperado
+            session.aiConfigs = {
+                ai_provider: data?.ai_provider || 'gemini',
+                api_key: data?.api_key || "",
+                model: data?.model || "",
+                system_prompt: data?.system_prompt || "Você é o assistente virtual da Red Comercial. Responda de forma prestativa e descontraída.",
+                ai_prefix: data?.ai_prefix || "",
+                ai_bot_enabled: data?.ai_bot_enabled === true // Garante que é booleano
+            }
+            console.log(`✅ Configurações de IA carregadas para Tenant ${tenantId}. Provedor: ${session.aiConfigs.ai_provider}`)
         }
-    })
+    } catch (err) {
+        console.error(`Erro ao carregar configs de IA para Tenant ${tenantId}:`, err)
+        const session = sessions.get(tenantId)
+        if (session) {
+            session.aiConfigs = { // Fallback para configs padrão
+                ai_provider: 'gemini',
+                api_key: process.env.GEMINI_API_KEY || "",
+                model: "gemini-1.5-flash",
+                system_prompt: "Você é um assistente virtual prestativo e descontraído.",
+                ai_prefix: "",
+                ai_bot_enabled: false
+            }
+        }
+    }
+}
+
+async function getTenantContext(tenantId) {
+    try {
+        // Busca dados básicos do tenant
+        const { data: tenant, error: tenantError } = await supabase.from('tenants').select('name, description, type, address, city').eq('id', tenantId).single()
+        if (tenantError) throw tenantError
+        
+        // Busca produtos/cardápio/serviços (Simplificado)
+        const { data: products, error: productsError } = await supabase.from('products').select('name, price, stock').eq('tenant_id', tenantId).limit(20)
+        if (productsError) console.error("Erro ao buscar produtos:", productsError) // Não impede o contexto de ser gerado
+
+        let context = `Nome da Empresa: ${tenant?.name || 'Empresa'}\n`
+        context += `Ramo de Atividade: ${tenant?.type || 'Comércio'}\n`
+        context += `Descrição da Empresa: ${tenant?.description || ''}\n`
+        context += `Endereço: ${tenant?.address || ''}, ${tenant?.city || ''}\n`
+        
+        if (products && products.length > 0) {
+            context += `\nPRODUTOS/SERVIÇOS DISPONÍVEIS:\n`
+            products.forEach(p => {
+                context += `- ${p.name}: R$ ${p.price ? p.price.toFixed(2) : 'Sob consulta'} (Estoque: ${p.stock || 'Sob consulta'})\n`
+            })
+        }
+        
+        return context
+    } catch (err) {
+        console.error(`Erro ao buscar contexto para Tenant ${tenantId}:`, err)
+        return "Dados da empresa temporariamente indisponíveis. Por favor, tente novamente mais tarde."
+    }
+}
+
+async function getAIResponse(text, configs) {
+    const provider = configs.ai_provider || 'gemini'
+    try {
+        if (!configs.api_key || !configs.model) {
+            console.warn(`IA (Tenant): API Key ou Modelo não configurado para o provedor ${provider}.`)
+            return "Desculpe, meu cérebro de IA não está totalmente configurado no momento. Por favor, avise o administrador!"
+        }
+
+        if (provider === 'gemini') {
+            const genAI = new GoogleGenerativeAI(configs.api_key)
+            const model = genAI.getGenerativeModel({ 
+                model: configs.model,
+                systemInstruction: configs.system_prompt // Gemini SDK aceita systemInstruction
+            })
+            const result = await model.generateContent(text)
+            return result.response.text()
+        } 
+        
+        // Lógica para Groq e OpenRouter via Fetch (OpenAI Compatible)
+        let apiUrl = ""
+        if (provider === 'groq') {
+            apiUrl = "https://api.groq.com/openai/v1/chat/completions"
+        } else if (provider === 'openrouter') {
+            apiUrl = "https://openrouter.ai/api/v1/chat/completions"
+        } else {
+            return "Provedor de IA desconhecido."
+        }
+
+        const response = await fetch(apiUrl, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${configs.api_key}`,
+                'HTTP-Referer': 'https://redcomercial.com.br', // Recomendado pelo OpenRouter
+                'X-Title': 'Red Comercial Bot'
+            },
+            body: JSON.stringify({
+                model: configs.model,
+                messages: [
+                    { role: "system", content: configs.system_prompt },
+                    { role: "user", content: text }
+                ]
+            })
+        })
+
+        const data = await response.json()
+        if (data.error) {
+            console.error(`Erro da API ${provider}:`, data.error)
+            return `Ops, o provedor de IA (${provider}) retornou um erro: ${data.error.message || 'Erro desconhecido'}.`
+        }
+        return data.choices?.[0]?.message?.content || null
+
+    } catch (err) {
+        console.error(`Erro na IA (Multi-Tenant, Provedor: ${provider}):`, err)
+        return "Eita, deu um revertério aqui na minha cabeça agora! Tenta de novo mais tarde, viu? 🤯"
+    }
+}
+
+// ── Endpoints da API ──
+
+app.get('/status/:tenantId', (req, res) => {
+    const { tenantId } = req.params
+    const session = sessions.get(tenantId)
+    if (!session) {
+        return res.json({ status: 'disconnected', qr: null, message: 'Sessão não encontrada ou desconectada.' })
+    }
+    res.json({ status: session.status, qr: session.lastQr, message: `Status da sessão para ${tenantId}` })
 })
 
-app.post('/ai/reload', (req, res) => {
-    console.log('🔄 Recarregando configurações de IA manualmente...')
-    loadAIConfigs()
-    res.json({ success: true })
+app.post('/start/:tenantId', async (req, res) => {
+    const { tenantId } = req.params
+    if (sessions.has(tenantId) && sessions.get(tenantId).status !== 'disconnected') {
+        return res.json({ success: true, message: 'Sessão já está rodando ou em processo de conexão.', status: sessions.get(tenantId).status })
+    }
+    connectToWhatsApp(tenantId)
+    res.json({ success: true, message: 'Iniciando conexão para o tenant...', status: 'connecting' })
+})
+
+app.post('/stop/:tenantId', async (req, res) => {
+    const { tenantId } = req.params
+    const session = sessions.get(tenantId)
+    if (session && session.sock) {
+        try {
+            await session.sock.logout() // Isso deve disparar o 'connection.update' com DisconnectReason.loggedOut
+            console.log(`Sessão do Tenant ${tenantId} desconectada via logout.`)
+            // A limpeza completa (sessions.delete, supabase, fs.rmSync) é feita no handler 'connection.update'
+            res.json({ success: true, message: 'Sessão desconectada com sucesso.' })
+        } catch (e) {
+            console.error(`Erro ao fazer logout do Tenant ${tenantId}:`, e)
+            res.status(500).json({ success: false, message: 'Erro ao desconectar a sessão.' })
+        }
+    } else {
+        res.json({ success: true, message: 'Nenhuma sessão ativa para este tenant.' })
+    }
+})
+
+app.post('/ai/reload/:tenantId', async (req, res) => {
+    const { tenantId } = req.params
+    console.log(`🔄 Recarregando configurações de IA para Tenant ${tenantId} manualmente...`)
+    await loadTenantAIConfigs(tenantId)
+    res.json({ success: true, message: `Configurações de IA para Tenant ${tenantId} recarregadas.` })
 })
 
 app.post('/ai/list-models', async (req, res) => {
@@ -269,6 +358,8 @@ app.post('/ai/list-models', async (req, res) => {
         } else if (provider === 'openrouter') {
             apiUrl = "https://openrouter.ai/api/v1/models"
             headers = { "Authorization": `Bearer ${api_key}` }
+        } else {
+            return res.status(400).json({ error: 'Provedor de IA inválido.' })
         }
 
         const response = await fetch(apiUrl, { headers })
@@ -298,34 +389,39 @@ app.post('/ai/list-models', async (req, res) => {
     }
 })
 
-app.get('/groups', async (req, res) => {
+app.get('/groups/:tenantId', async (req, res) => {
+    const { tenantId } = req.params
+    const session = sessions.get(tenantId)
+    
+    if (!session || session.status !== 'authenticated') {
+        return res.status(503).json({ success: false, error: 'WhatsApp não está conectado para este tenant' })
+    }
+
     try {
-        if (qrStatus !== 'authenticated' || !sock) {
-            return res.status(503).json({ success: false, error: 'WhatsApp não está conectado' })
+        if (typeof session.sock.groupFetchAllParticipating !== 'function') {
+            return res.status(503).json({ success: false, error: 'Socket não suporta listagem de grupos' })
         }
-        // Verifica se o método existe antes de chamar
-        if (typeof sock.groupFetchAllParticipating !== 'function') {
-            return res.status(503).json({ success: false, error: 'Socket não suporta listagem de grupos nesta versão' })
-        }
-        const groupMetadata = await sock.groupFetchAllParticipating()
+        const groupMetadata = await session.sock.groupFetchAllParticipating()
         const groups = Object.values(groupMetadata).map(group => ({
             id: group.id,
             subject: group.subject
         }))
         res.json({ success: true, groups })
     } catch (err) {
-        console.error('Erro ao buscar grupos (sem derrubar conexão):', err?.message || err)
-        // Retorna erro SEM deixar o crash propagar pro socket principal
-        res.status(500).json({ success: false, error: 'Erro ao buscar grupos: ' + (err?.message || 'desconhecido') })
+        console.error(`Erro ao buscar grupos (Tenant ${tenantId}):`, err?.message || err)
+        res.status(500).json({ success: false, error: 'Erro ao buscar grupos.' })
     }
 })
 
-app.post('/send', async (req, res) => {
-    try {
-        if (qrStatus !== 'authenticated') {
-            return res.status(503).json({ error: 'WhatsApp não está conectado' })
-        }
+app.post('/send/:tenantId', async (req, res) => {
+    const { tenantId } = req.params
+    const session = sessions.get(tenantId)
 
+    if (!session || session.status !== 'authenticated') {
+        return res.status(503).json({ success: false, error: 'WhatsApp não está conectado para este tenant' })
+    }
+
+    try {
         const { number, message } = req.body
         if (!number || !message) {
             return res.status(400).json({ error: 'Número e mensagem são obrigatórios' })
@@ -340,16 +436,15 @@ app.post('/send', async (req, res) => {
             }
         }
         
-        await sock.sendMessage(formattedNumber, { text: message })
-        console.log(`Mensagem enviada para ${number}`)
+        await session.sock.sendMessage(formattedNumber, { text: message })
+        console.log(`Mensagem enviada pelo Tenant ${tenantId} para ${number}`)
         
         res.json({ success: true, status: 'Enviado' })
     } catch (err) {
-        console.error('Erro de envio:', err)
+        console.error(`Erro de envio (Tenant ${tenantId}):`, err)
         res.status(500).json({ error: err.message })
     }
 })
 
-app.listen(3001, () => {
-    console.log('✅ Microserviço WhatsApp rodando na porta 3001')
-})
+const PORT = process.env.WHATSAPP_PORT || 3001
+app.listen(PORT, () => console.log(`🚀 Multi-Tenant WhatsApp Service rodando na porta ${PORT}`))

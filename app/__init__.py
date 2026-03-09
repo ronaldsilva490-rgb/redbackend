@@ -47,6 +47,7 @@ def create_app():
     from .routes.caixa         import caixa_bp
     from .routes.business      import business_bp
     from .routes.hotel         import hotel_bp
+    from .routes.tenant_ai     import tenant_ai_bp
 
     app.register_blueprint(auth_bp,        url_prefix="/api/auth")
     app.register_blueprint(admin_bp,       url_prefix="/api/admin")
@@ -68,6 +69,7 @@ def create_app():
     app.register_blueprint(caixa_bp,       url_prefix="/api/caixa")
     app.register_blueprint(business_bp,    url_prefix="/api/business")
     app.register_blueprint(hotel_bp,       url_prefix="/api/hotel")
+    app.register_blueprint(tenant_ai_bp,   url_prefix="/api/tenant-ai")
 
     @app.get("/")
     @cross_origin()
