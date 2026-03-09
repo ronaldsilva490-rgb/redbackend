@@ -167,9 +167,17 @@ async function connectToWhatsApp(tenantId) {
                 const systemPrompt = session.aiConfigs.system_prompt || "Você é um assistente virtual prestativo e descontraído."
                 const fullPrompt = `CONTEXTO DA EMPRESA:\n${businessContext}\n\nINSTRUÇÕES:\n${systemPrompt}\n\nPERGUNTA DO CLIENTE: ${cleanText || "Oi!"}`
 
-                const response = await getAIResponse(fullPrompt, session.aiConfigs)
-                if (response) {
-                    await sock.sendMessage(remoteJid, { text: response }, { quoted: msg })
+                try {
+                    const response = await getAIResponse(fullPrompt, session.aiConfigs)
+                    if (response) {
+                        await sock.sendMessage(remoteJid, { text: response }, { quoted: msg })
+                    } else {
+                        // Se a IA não retornar nada (null/empty), envia fallback
+                        await sock.sendMessage(remoteJid, { text: "Sem conexão com o modelo." }, { quoted: msg })
+                    }
+                } catch (err) {
+                    console.error(`Erro ao processar resposta da IA (Tenant ${tenantId}):`, err)
+                    await sock.sendMessage(remoteJid, { text: "Sem conexão com o modelo." }, { quoted: msg })
                 }
             }
         }
@@ -211,7 +219,7 @@ async function loadTenantAIConfigs(tenantId) {
                 model: data?.model || "",
                 system_prompt: data?.system_prompt || "Você é o assistente virtual da Red Comercial.",
                 ai_prefix: data?.ai_prefix || "",
-                ai_bot_enabled: data?.ai_bot_enabled === true
+                ai_bot_enabled: data?.ai_enabled === true // Corrigido para 'ai_enabled' (coluna da tabela)
             }
         }
         
@@ -313,13 +321,13 @@ async function getAIResponse(text, configs) {
         const data = await response.json()
         if (data.error) {
             console.error(`Erro da API ${provider}:`, data.error)
-            return `Ops, o provedor de IA (${provider}) retornou um erro: ${data.error.message || 'Erro desconhecido'}.`
+            return null // Fallback acionado pelo chamador
         }
         return data.choices?.[0]?.message?.content || null
 
     } catch (err) {
         console.error(`Erro na IA (Multi-Tenant, Provedor: ${provider}):`, err)
-        return "Eita, deu um revertério aqui na minha cabeça agora! Tenta de novo mais tarde, viu? 🤯"
+        return null // Fallback acionado pelo chamador
     }
 }
 
