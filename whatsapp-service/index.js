@@ -25,6 +25,11 @@ const ADMIN_TENANT_ID = process.env.ADMIN_TENANT_ID || 'admin'
 // ── Gerenciador de Sessões (Multi-Tenant) ──
 const sessions = new Map()
 
+// ── Memória Contínua em RAM (Rolling Summary) ──
+// Map: group_id -> { tenantId, messages: [ { author, text } ] }
+const groupMessageBuffers = new Map()
+const MAX_BUFFER_MESSAGES = 15
+
 // ── Prevenção de crash silencioso do processo Node ──
 process.on('uncaughtException', (err) => {
     console.error('❌ [CRITICAL] Uncaught Exception:', err?.message || err)
@@ -178,6 +183,34 @@ async function connectToWhatsApp(tenantId) {
             const normKeyword = normalizeText(keyword)
             const containsKeyword = Boolean(normKeyword && normContent.includes(normKeyword))
 
+            // ───────────────── MEMÓRIA DE GRUPOS (Rolling Summary) ─────────────────
+            const author = msg.pushName || (msg.key.remoteJid.split('@')[0])
+            
+            if (isGroup && content) {
+                const bufferKey = `${tenantId}_${remoteJid}`
+                if (!groupMessageBuffers.has(bufferKey)) {
+                    groupMessageBuffers.set(bufferKey, { tenantId, messages: [] })
+                }
+                const buffer = groupMessageBuffers.get(bufferKey)
+                
+                // Limpa marcações e salva no buffer de curto prazo
+                let textForBuffer = content.replace(/@\d+/g, '').trim()
+                if (textForBuffer.length > 2) {
+                    buffer.messages.push({ author, text: textForBuffer })
+                }
+
+                // Gatilho: Se atingiu o limite, dispara sumarização silenciosa background
+                if (buffer.messages.length >= MAX_BUFFER_MESSAGES) {
+                    const messagesToSummarize = [...buffer.messages]
+                    buffer.messages = [] // Limpa a RAM imediatamente
+                    // Executa a função sem dar await, não bloqueia o fluxo de mensagens
+                    summarizeGroupContext(tenantId, remoteJid, messagesToSummarize, session.aiConfigs).catch(err => {
+                        console.error(`[BG RUNNER] Erro de sumarização (Grupo ${remoteJid}):`, err?.message)
+                    })
+                }
+            }
+            // ───────────────────────────────────────────────────────────────────────
+
             if (isGroup) {
                 console.log(`📩 [DEBUG GRUPO - Tenant ${tenantId}] text: "${content.substring(0, 30)}..."`)
                 console.log(`   - isMentioned: ${isMentioned}, isReplyToMe: ${isReplyToMe}, containsKeyword: ${containsKeyword}, keywordSetada: "${keyword}"`)
@@ -201,14 +234,24 @@ async function connectToWhatsApp(tenantId) {
                 // Monta Contexto Dinâmico (RAG)
                 const systemPrompt = session.aiConfigs.system_prompt || "Você é um assistente virtual prestativo e descontraído."
                 let fullPrompt = ""
+                
+                // Busca resumo contínuo (se for grupo)
+                let groupMemory = ""
+                if (isGroup) {
+                    try {
+                        const { data: mem } = await supabase.from('whatsapp_group_contexts')
+                            .select('summary').eq('tenant_id', tenantId).eq('group_id', remoteJid).single()
+                        if (mem?.summary) groupMemory = `\n\n[MEMÓRIA DO GRUPO (Resumo das últimas conversas): ${mem.summary}]`
+                    } catch (e) { /* ignore se não houver memória */ }
+                }
 
                 if (tenantId === ADMIN_TENANT_ID) {
-                    // Admin: sem injeção de contexto de empresa, só prompt e mensagem
-                    fullPrompt = `INSTRUÇÕES:\n${systemPrompt}\n\nPERGUNTA DO CLIENTE: ${cleanText || "Oi!"}`
+                    // Admin: sem injeção de contexto de empresa, só prompt, memória e mensagem
+                    fullPrompt = `INSTRUÇÕES:\n${systemPrompt}${groupMemory}\n\nPERGUNTA DO CLIENTE: ${cleanText || "Oi!"}`
                 } else {
-                    // Tenant: RAG completo
+                    // Tenant: RAG completo com contexto de empresa
                     const businessContext = await getTenantContext(tenantId)
-                    fullPrompt = `CONTEXTO DA EMPRESA:\n${businessContext}\n\nINSTRUÇÕES:\n${systemPrompt}\n\nPERGUNTA DO CLIENTE: ${cleanText || "Oi!"}`
+                    fullPrompt = `CONTEXTO DA EMPRESA:\n${businessContext}\n\nINSTRUÇÕES:\n${systemPrompt}${groupMemory}\n\nPERGUNTA DO CLIENTE: ${cleanText || "Oi!"}`
                 }
 
                 try {
@@ -229,6 +272,51 @@ async function connectToWhatsApp(tenantId) {
 }
 
 // ── Funções de IA (Adaptadas para Multi-Tenant) ──
+
+async function summarizeGroupContext(tenantId, groupId, newMessages, aiConfigs) {
+    if (!aiConfigs || !aiConfigs.api_key) return
+    console.log(`[RAG BG] 🧠 Iniciando sumarização silently para o grupo ${groupId} (Tenant ${tenantId})`)
+    
+    try {
+        // 1. Puxa contexto atual
+        const { data: currentContext } = await supabase.from('whatsapp_group_contexts')
+            .select('summary').eq('tenant_id', tenantId).eq('group_id', groupId).single()
+        
+        let oldSummary = currentContext?.summary || "Nenhuma conversa gravada."
+
+        // 2. Transcreve mensagens
+        let transcript = newMessages.map(m => `${m.author}: ${m.text}`).join('\n')
+
+        // 3. Monta prompt super compactador
+        const prompt = `Você é um agente analisador de contexto silencioso.
+RESUMO ANTIGO DO GRUPO:
+"${oldSummary}"
+
+NOVAS MENSAGENS NESTE EXATO MOMENTO:
+${transcript}
+
+Sua tarefa: Reescreva o RESUMO. Mantenha os tópicos cruciais do resumo antigo e insira os novos assuntos falados agora. Remova informações velhas que não importam mais. Seja ultracompacto (máximo de 120 palavras). Foque apenas no que foi discutido e qual é o assunto atual.
+Não saude, não explique nada, retorne APENAS O TEXTO DE RESUMO puro.`
+
+        // 4. Bate na IA
+        const newSummary = await getAIResponse(prompt, aiConfigs, true) // flag true pra forçar algo se necessário, depende da implementação getAIResponse, vamos usar o padrão
+        
+        if (newSummary && newSummary.length > 5 && newSummary.length < 2000) {
+            // 5. Salva no banco (Upsert)
+            const { error: dbErr } = await supabase.from('whatsapp_group_contexts').upsert({
+                tenant_id: tenantId,
+                group_id: groupId,
+                summary: newSummary.trim(),
+                updated_at: new Date()
+            }, { onConflict: 'tenant_id, group_id' })
+            
+            if (dbErr) console.error(`[RAG BG] Erro ao gravar upsert no supabase:`, dbErr?.message)
+            else console.log(`[RAG BG] ✅ Resumo de grupo atualizado! Tópicos: "${newSummary.substring(0,40)}..."`)
+        }
+    } catch (err) {
+        console.error(`[RAG BG] ❌ Falha na geração do Rolling Summary para Tenant ${tenantId}:`, err?.message)
+    }
+}
 
 async function loadTenantAIConfigs(tenantId) {
     try {
