@@ -277,6 +277,8 @@ async function connectToWhatsApp(tenantId) {
                 // Instrução de humor baseada na vibe
                 const vibeInstruction = `\n\n[VIBE ATUAL: ${currentVibe}. SE a vibe for descontraída ou houver intimidade, você PODE (esporadicamente) usar um dos apelidos do perfil. Se a vibe for séria ou formal, use o nome real ou seja mais educado.]`
 
+                const systemPrompt = session.aiConfigs?.system_prompt || "Você é um assistente virtual prestativo e descontraído."
+                
                 if (tenantId === ADMIN_TENANT_ID) {
                     fullPrompt = `INSTRUÇÕES:\n${systemPrompt}${contextCombined}${vibeInstruction}\n\nPERGUNTA: ${cleanText || "Oi!"}`
                 } else {
