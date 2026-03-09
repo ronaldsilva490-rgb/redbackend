@@ -7,7 +7,6 @@ import os, time, jwt, bcrypt, requests
 from datetime import datetime, timezone, timedelta
 from functools import wraps
 from flask import Blueprint, request, jsonify
-from flask_cors import cross_origin
 from ..utils.supabase_client import get_supabase_admin
 from ..utils.response import success, error
 
@@ -50,9 +49,6 @@ def verify_admin_token(token: str) -> dict | None:
 def require_admin(f):
     @wraps(f)
     def decorated(*args, **kwargs):
-        if request.method == "OPTIONS":
-            return jsonify({"status": "success"}), 200
-            
         auth = request.headers.get("Authorization", "")
         token = auth.replace("Bearer ", "").strip()
         if not token:
@@ -510,7 +506,6 @@ def clear_logs():
 # ═══════════════════════════════════════════════════════════
 
 @admin_bp.post("/whatsapp/send")
-@cross_origin()
 @require_admin
 def whatsapp_send():
     """
@@ -585,7 +580,6 @@ def whatsapp_send():
 
 
 @admin_bp.get("/whatsapp/status")
-@cross_origin()
 @require_admin
 def whatsapp_status():
     """Consome o microserviço Node.js para relatar Status / Base64-QR"""
@@ -602,7 +596,6 @@ def whatsapp_status():
          return error(f"Falha ao conectar no microserviço Node: {str(e)}", 500)
 
 @admin_bp.get("/whatsapp/groups")
-@cross_origin()
 @require_admin
 def whatsapp_groups():
     """Consome o microserviço Node.js para relatar a listagem de Grupos do WhatsApp"""
