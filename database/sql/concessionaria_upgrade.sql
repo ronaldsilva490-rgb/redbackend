@@ -36,6 +36,9 @@ ALTER TABLE public.leads ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.vehicle_costs ENABLE ROW LEVEL SECURITY;
 
 -- Políticas de Isolamento
+DROP POLICY IF EXISTS "Tenant isolation for leads" ON public.leads;
+DROP POLICY IF EXISTS "Tenant isolation for vehicle_costs" ON public.vehicle_costs;
+
 CREATE POLICY "Tenant isolation for leads" ON public.leads FOR ALL USING (tenant_id = public.get_tenant_id());
 CREATE POLICY "Tenant isolation for vehicle_costs" ON public.vehicle_costs FOR ALL USING (tenant_id = public.get_tenant_id());
 
