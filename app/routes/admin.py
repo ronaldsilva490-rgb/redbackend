@@ -499,3 +499,95 @@ def clear_logs():
         return success(message="Logs antigos removidos")
     except Exception as e:
         return error(f"Erro ao limpar logs: {str(e)}", 500)
+
+
+# ═══════════════════════════════════════════════════════════
+# INTEGRAÇÃO WHATSAPP
+# ═══════════════════════════════════════════════════════════
+
+@admin_bp.post("/whatsapp/send")
+@require_admin
+def whatsapp_send():
+    """
+    Dispara mensagens de teste utilizando a engine escolhida
+    - 'oficial' (Meta Cloud API)
+    - 'qrcode' (Microserviço Baileys em Node)
+    """
+    data = request.json or {}
+    engine = data.get('engine', 'oficial')
+    number = data.get('number', '').strip()
+    message = data.get('message', '').strip()
+    configs = data.get('configs', {})
+
+    if not number or not message:
+        return error("Número e mensagem são obrigatórios", 400)
+
+    # Lógica Meta Oficial
+    if engine == 'oficial':
+        token = configs.get('token')
+        phone_id = configs.get('phoneId')
+        
+        if not token or not phone_id:
+            return error("Token e Phone ID são obrigatórios para a Cloud API Oficial", 400)
+            
+        url = f"https://graph.facebook.com/v17.0/{phone_id}/messages"
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json"
+        }
+        
+        # Garante o formato do número
+        safe_number = number if number.startswith('55') else f"55{number}"
+        
+        payload = {
+            "messaging_product": "whatsapp",
+            "recipient_type": "individual",
+            "to": safe_number,
+            "type": "text",
+            "text": {"preview_url": False, "body": message}
+        }
+        
+        try:
+            resp = requests.post(url, json=payload, headers=headers)
+            if resp.status_code in [200, 201]:
+                return success({"message_id": resp.json().get("messages", [{}])[0].get("id"), "status": "Enviado"})
+            else:
+                return error(f"Refusão Graph API: {resp.text}", resp.status_code)
+        except Exception as e:
+            return error(f"Falha de conexão com a Meta: {str(e)}", 500)
+            
+    # Lógica Microserviço (QR Code Baileys)
+    elif engine == 'qrcode':
+        try:
+            # Enviamos ao microserviço Node na porta 3001
+            # O Node deverá suportar o POST /send
+            payload = {
+                "number": number,
+                "message": message
+            }
+            resp = requests.post("http://localhost:3001/send", json=payload, timeout=5)
+            if resp.status_code == 200:
+                return success({"status": "Serviço QRCode completou o envio"})
+            else:
+                return error(f"Erro no serviço local WhatsApp: {resp.text}", 500)
+        except requests.exceptions.ConnectionError:
+            return error("O microserviço Node na porta 3001 parece estar offline ou não inicializado.", 500)
+        except Exception as e:
+             return error(f"Falha de gateway: {str(e)}", 500)
+             
+    return error("Engine desconhecida.", 400)
+
+
+@admin_bp.get("/whatsapp/status")
+@require_admin
+def whatsapp_status():
+    """Consome a porta 3001 do microserviço Node.js para relatar Status / Base64-QR"""
+    try:
+        resp = requests.get("http://localhost:3001/status", timeout=2)
+        if resp.status_code == 200:
+            return success(resp.json())
+        return error("Falha do serviço Node.", 500)
+    except requests.exceptions.ConnectionError:
+         return success({"status": "offline", "qr": None, "msg": "Microserviço Offline"})
+    except Exception as e:
+         return error(f"Falha ao conectar no microserviço Node: {str(e)}", 500)
