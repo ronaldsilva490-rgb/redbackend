@@ -1,7 +1,7 @@
 FROM python:3.11-slim
 
-# Instala Node.js 20 LTS
-RUN apt-get update && apt-get install -y curl && \
+# Instala Node.js 20 LTS + git (necessário pro npm/baileys)
+RUN apt-get update && apt-get install -y curl git && \
     curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
     apt-get install -y nodejs && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
