@@ -110,7 +110,9 @@ def list_tenant_ai_models():
         return error("API Key é obrigatória")
 
     try:
-        r = requests.post(f"{WHATSAPP_SERVICE_URL}/ai/list-models", json={"api_key": api_key, "provider": provider}, timeout=10)
-        return jsonify(r.json()), r.status_code
+        r = requests.post(f"{WHATSAPP_SERVICE_URL}/ai/list-models", json={"api_key": api_key, "provider": provider}, timeout=15)
+        if r.status_code == 200:
+            return success(r.json())
+        return error(f"Erro ao listar modelos: {r.text}", r.status_code)
     except Exception as e:
         return error(f"Erro ao listar modelos: {str(e)}", 503)

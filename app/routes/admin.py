@@ -586,8 +586,8 @@ def whatsapp_start():
     import os
     node_url = os.environ.get('WHATSAPP_SERVICE_URL', 'http://localhost:3001')
     try:
-        resp = requests.post(f"{node_url}/start/admin", timeout=5)
-        return jsonify(resp.json()), resp.status_code
+        resp = requests.post(f"{node_url}/start/admin", timeout=10)
+        return success(resp.json()), resp.status_code
     except Exception as e:
         return error(f"Erro ao iniciar WhatsApp Admin: {str(e)}", 500)
 
@@ -598,8 +598,8 @@ def whatsapp_stop():
     import os
     node_url = os.environ.get('WHATSAPP_SERVICE_URL', 'http://localhost:3001')
     try:
-        resp = requests.post(f"{node_url}/stop/admin", timeout=5)
-        return jsonify(resp.json()), resp.status_code
+        resp = requests.post(f"{node_url}/stop/admin", timeout=10)
+        return success(resp.json()), resp.status_code
     except Exception as e:
         return error(f"Erro ao parar WhatsApp Admin: {str(e)}", 500)
 
@@ -610,10 +610,11 @@ def whatsapp_status():
     import os
     node_url = os.environ.get('WHATSAPP_SERVICE_URL', 'http://localhost:3001')
     try:
-        resp = requests.get(f"{node_url}/status", timeout=2)
+        # Chamada direta para o endpoint de admin para evitar 302
+        resp = requests.get(f"{node_url}/status/admin", timeout=10)
         if resp.status_code == 200:
             return success(resp.json())
-        return error("Falha do serviço Node.", 500)
+        return error(f"Falha do serviço Node: {resp.status_code}", 500)
     except requests.exceptions.ConnectionError:
          return success({"status": "offline", "qr": None, "msg": "Microserviço Offline"})
     except Exception as e:
@@ -626,7 +627,8 @@ def whatsapp_groups():
     import os
     node_url = os.environ.get('WHATSAPP_SERVICE_URL', 'http://localhost:3001')
     try:
-        resp = requests.get(f"{node_url}/groups", timeout=10)
+        # Chamada direta para admin
+        resp = requests.get(f"{node_url}/groups/admin", timeout=15)
         if resp.status_code == 200:
             return success(resp.json())
         return error(f"Falha do serviço Node: {resp.text}", 500)
