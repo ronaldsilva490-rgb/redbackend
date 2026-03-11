@@ -532,12 +532,14 @@ async function getAIResponse(text, configs, overrideSystemPrompt = null) {
             return result.response.text()
         } 
         
-        // Lógica para Groq e OpenRouter via Fetch (OpenAI Compatible)
+        // Lógica para Groq, OpenRouter e NVIDIA NIM via Fetch (OpenAI Compatible)
         let apiUrl = ""
         if (provider === 'groq') {
             apiUrl = "https://api.groq.com/openai/v1/chat/completions"
         } else if (provider === 'openrouter') {
             apiUrl = "https://openrouter.ai/api/v1/chat/completions"
+        } else if (provider === 'nvidia') {
+            apiUrl = "https://integrate.api.nvidia.com/v1/chat/completions"
         } else {
             return "Provedor de IA desconhecido."
         }
@@ -676,6 +678,9 @@ app.post('/ai/list-models', async (req, res) => {
         } else if (provider === 'openrouter') {
             apiUrl = "https://openrouter.ai/api/v1/models"
             headers = { "Authorization": `Bearer ${api_key}` }
+        } else if (provider === 'nvidia') {
+            apiUrl = "https://integrate.api.nvidia.com/v1/models"
+            headers = { "Authorization": `Bearer ${api_key}` }
         } else {
             return res.status(400).json({ error: 'Provedor de IA inválido.' })
         }
@@ -693,10 +698,10 @@ app.post('/ai/list-models', async (req, res) => {
                 .filter(m => m.supportedGenerationMethods.includes('generateContent'))
                 .map(m => ({ id: m.name.replace('models/', ''), name: m.displayName }))
         } else {
-            // Groq e OpenRouter retornam array 'data'
+            // Groq, OpenRouter e NVIDIA NIM retornam array 'data'
             models = (data.data || []).map(m => ({
                 id: m.id,
-                name: m.id // Geralmente o id é o nome técnico (ex: gpt-3.5-turbo)
+                name: m.id
             }))
         }
 
