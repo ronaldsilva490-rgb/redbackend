@@ -540,6 +540,9 @@ async function getAIResponse(text, configs, overrideSystemPrompt = null) {
             apiUrl = "https://openrouter.ai/api/v1/chat/completions"
         } else if (provider === 'nvidia') {
             apiUrl = "https://integrate.api.nvidia.com/v1/chat/completions"
+        } else if (provider === 'ollama') {
+            const ollamaUrl = process.env.OLLAMA_PROXY_URL || 'http://automais.ddns.net:11434'
+            apiUrl = `${ollamaUrl}/v1/chat/completions`
         } else {
             return "Provedor de IA desconhecido."
         }
@@ -547,7 +550,7 @@ async function getAIResponse(text, configs, overrideSystemPrompt = null) {
         const response = await fetch(apiUrl, {
             method: 'POST',
             headers: {
-                'Authorization': `Bearer ${configs.api_key}`,
+                ...(provider !== 'ollama' ? { 'Authorization': `Bearer ${configs.api_key}` } : {}),
                 'Content-Type': 'application/json',
                 'HTTP-Referer': 'https://redcomercial.com.br',
                 'X-Title': 'Red Comercial AI'
@@ -681,6 +684,17 @@ app.post('/ai/list-models', async (req, res) => {
         } else if (provider === 'nvidia') {
             apiUrl = "https://integrate.api.nvidia.com/v1/models"
             headers = { "Authorization": `Bearer ${api_key}` }
+        } else if (provider === 'ollama') {
+            // Lista modelos direto no proxy Ollama
+            const ollamaUrl = process.env.OLLAMA_PROXY_URL || 'http://automais.ddns.net:11434'
+            try {
+                const ollamaRes = await fetch(`${ollamaUrl}/api/tags`)
+                const ollamaData = await ollamaRes.json()
+                const models = (ollamaData.models || []).map(m => ({ id: m.name, name: m.name }))
+                return res.json({ success: true, models })
+            } catch (err) {
+                return res.status(500).json({ error: `Falha ao conectar no proxy Ollama: ${err.message}` })
+            }
         } else {
             return res.status(400).json({ error: 'Provedor de IA inválido.' })
         }
