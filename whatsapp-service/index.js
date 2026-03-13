@@ -200,34 +200,53 @@ async function generateAudio(text, configs) {
         const { promisify } = require('util')
         const execFileAsync = promisify(execFile)
 
-        // Valida se é um nome de voz Edge TTS válido (formato: xx-XX-NomeNeural)
-        // Se for um ID do ElevenLabs (sem hífens ou sem "Neural"), usa o padrão
-        const rawVoice = ttsCfg.voice_id || ''
-        const isValidEdgeVoice = /^[a-z]{2}-[A-Z]{2}-.+Neural$/.test(rawVoice)
-        const voice = isValidEdgeVoice ? rawVoice : 'pt-BR-CamilaNeural'
-        const tmpOut = path.join('/tmp', `tts_${Date.now()}.mp3`)
+        const tmpWav = path.join('/tmp', `tts_${Date.now()}.wav`)
+        const tmpOgg = path.join('/tmp', `tts_${Date.now() + 1}.ogg`)
 
-        // Limita texto para não explodir o edge-tts
-        const cleanText = text.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '').substring(0, 400)
+        // Limpa markdown e caracteres de controle, limita tamanho
+        const cleanText = text
+            .replace(/[ --]/g, '')
+            .replace(/[*_~`]/g, '')
+            .substring(0, 300)
 
-        await execFileAsync('edge-tts', [
-            '--voice', voice,
-            '--text', cleanText,
-            '--write-media', tmpOut
-        ], { timeout: 20000 })
+        // espeak-ng: offline, zero rede, voz pt-br
+        await execFileAsync('espeak-ng', [
+            '-v', 'pt-br',
+            '-s', '155',   // velocidade (palavras/min)
+            '-p', '60',    // pitch (0-99, maior = mais agudo)
+            '-a', '180',   // amplitude
+            '-w', tmpWav,
+            cleanText
+        ], { timeout: 15000 })
 
-        if (!fs.existsSync(tmpOut)) {
-            console.error('[TTS] Arquivo de saída não gerado')
+        if (!fs.existsSync(tmpWav)) {
+            console.error('[TTS] espeak-ng nao gerou arquivo')
             return null
         }
 
-        const audioBuffer = fs.readFileSync(tmpOut)
-        try { fs.unlinkSync(tmpOut) } catch (_) {}
+        // Converte WAV -> OGG opus (formato nativo WhatsApp PTT)
+        await execFileAsync('ffmpeg', [
+            '-y', '-i', tmpWav,
+            '-c:a', 'libopus',
+            '-b:a', '24k',
+            '-vbr', 'on',
+            tmpOgg
+        ], { timeout: 15000 })
 
-        console.log(`[TTS] ✅ Áudio gerado (${audioBuffer.length} bytes) via Edge TTS / ${voice}`)
+        try { fs.unlinkSync(tmpWav) } catch (_) {}
+
+        if (!fs.existsSync(tmpOgg)) {
+            console.error('[TTS] ffmpeg nao converteu para OGG')
+            return null
+        }
+
+        const audioBuffer = fs.readFileSync(tmpOgg)
+        try { fs.unlinkSync(tmpOgg) } catch (_) {}
+
+        console.log(`[TTS] Audio gerado (${audioBuffer.length} bytes) via espeak-ng`)
         return audioBuffer
     } catch (err) {
-        console.error('[TTS] Exceção Edge TTS:', err.message)
+        console.error('[TTS] Excecao espeak-ng:', err.message)
         return null
     }
 }
