@@ -14,6 +14,9 @@ primary_region = "gru"
   min_machines_running = 1
   processes = ["app"]
 
+# IMPORTANTE: Apenas 1 volume. Nunca suba com múltiplos volumes ativos.
+# O volume é criado manualmente antes do deploy com:
+# fly volumes create whatsapp_data --region gru --size 1 -a redbackend
 [[mounts]]
   source = "whatsapp_data"
   destination = "/data/auth_info_baileys"
@@ -22,3 +25,7 @@ primary_region = "gru"
   memory = "1gb"
   cpu_kind = "shared"
   cpus = 1
+
+# Garante substituição imediata sem manter máquina velha rodando em paralelo
+[deploy]
+  strategy = "immediate"

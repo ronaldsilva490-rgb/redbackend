@@ -638,9 +638,16 @@ async function getTenantContext(tenantId) {
 // ══════════════════════════════════════════════════
 // CONEXÃO WHATSAPP
 // ══════════════════════════════════════════════════
-async function connectToWhatsApp(tenantId) {
-    console.log(`[WA] Conectando Tenant: ${tenantId}`)
+async function connectToWhatsApp(tenantId, forceReset = false) {
+    console.log(`[WA] Conectando Tenant: ${tenantId}${forceReset ? ' (RESET FORÇADO)' : ''}`)
     const authPath = path.join(__dirname, `auth_info_baileys/tenant_${tenantId}`)
+
+    // Se forceReset, apaga credenciais antigas para garantir novo QR
+    if (forceReset && fs.existsSync(authPath)) {
+        fs.rmSync(authPath, { recursive: true, force: true })
+        console.log(`[WA] 🗑️ Credenciais antigas removidas para ${tenantId}`)
+    }
+
     if (!fs.existsSync(authPath)) fs.mkdirSync(authPath, { recursive: true })
 
     const { state, saveCreds } = await useMultiFileAuthState(authPath)
@@ -683,9 +690,9 @@ async function connectToWhatsApp(tenantId) {
                 sessions.delete(tenantId)
                 try { await supabase.from('whatsapp_sessions').delete().eq('tenant_id', tenantId) } catch (_) { }
                 if (fs.existsSync(authPath)) fs.rmSync(authPath, { recursive: true, force: true })
-                if (statusCode === 428) setTimeout(() => connectToWhatsApp(tenantId), 3000)
+                if (statusCode === 428) setTimeout(() => connectToWhatsApp(tenantId, false), 3000)
             } else {
-                setTimeout(() => connectToWhatsApp(tenantId), 2000)
+                setTimeout(() => connectToWhatsApp(tenantId, false), 2000)
             }
         } else if (connection === 'open') {
             session.status = 'authenticated'
@@ -941,8 +948,23 @@ app.post('/start/:tenantId', async (req, res) => {
         if (existing && existing.status !== 'disconnected' && existing.status !== 'error') {
             return res.json({ success: true, message: 'Sessão já ativa.', status: existing.status })
         }
+
+        // Verifica se há creds.json corrompido/incompleto no volume
+        // Se existir mas não tiver creds.json válido, força reset para garantir QR novo
+        const authPath = path.join(__dirname, `auth_info_baileys/tenant_${tenantId}`)
+        let forceReset = false
+        if (fs.existsSync(authPath)) {
+            const credsFile = path.join(authPath, 'creds.json')
+            if (!fs.existsSync(credsFile)) {
+                // Pasta existe mas sem creds — estado corrompido, limpa
+                console.log(`[START] ⚠️ Auth dir sem creds.json — limpando para garantir QR`)
+                fs.rmSync(authPath, { recursive: true, force: true })
+                forceReset = true
+            }
+        }
+
         res.json({ success: true, message: 'Iniciando...', status: 'connecting' })
-        connectToWhatsApp(tenantId).catch(err => console.error(`[BG] Falha ao conectar ${tenantId}:`, err))
+        connectToWhatsApp(tenantId, forceReset).catch(err => console.error(`[BG] Falha ao conectar ${tenantId}:`, err))
     } catch (err) {
         if (!res.headersSent) res.status(500).json({ success: false, error: err.message })
     }
@@ -967,6 +989,34 @@ app.post('/stop/:tenantId', async (req, res) => {
         res.json({ success: true })
     }
 })
+
+// ── Reset forçado: limpa credenciais e gera novo QR ──
+app.post('/reset/:tenantId', async (req, res) => {
+    const { tenantId } = req.params
+    console.log(`[RESET] 🔄 Reset forçado para tenant: ${tenantId}`)
+    const session = sessions.get(tenantId)
+
+    // Encerra sessão existente
+    if (session?.sock) {
+        try { session.sock.end() } catch (_) {}
+    }
+    sessions.delete(tenantId)
+
+    // Limpa credenciais do volume
+    const authPath = path.join(__dirname, `auth_info_baileys/tenant_${tenantId}`)
+    if (fs.existsSync(authPath)) {
+        fs.rmSync(authPath, { recursive: true, force: true })
+        console.log(`[RESET] 🗑️ Credenciais removidas: ${authPath}`)
+    }
+
+    // Limpa estado no Supabase
+    try { await supabase.from('whatsapp_sessions').delete().eq('tenant_id', tenantId) } catch (_) {}
+
+    res.json({ success: true, message: 'Sessão resetada. Chame /start para gerar novo QR.' })
+})
+
+// Alias de reset para admin
+app.post('/reset', (_, res) => res.redirect(307, '/reset/admin'))
 
 app.post('/ai/reload/:tenantId', async (req, res) => {
     await loadTenantAIConfigs(req.params.tenantId)
