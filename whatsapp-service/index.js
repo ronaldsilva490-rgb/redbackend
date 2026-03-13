@@ -52,7 +52,7 @@ async function getBaileysVersion() {
         cachedBaileysVersion = v
         return v
     } catch {
-        return { version: [2, 2413, 51], isLatest: true }
+        return { version: [2, 3000, 1033846690], isLatest: true }
     }
 }
 
