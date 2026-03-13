@@ -52,7 +52,7 @@ async function getBaileysVersion() {
         cachedBaileysVersion = v
         return v
     } catch {
-        return { version: [2, 3000, 1015901307], isLatest: true }
+        return { version: [2, 2413, 51], isLatest: true }
     }
 }
 
@@ -654,7 +654,7 @@ async function connectToWhatsApp(tenantId, forceReset = false) {
 
     // Baileys v7-rc.9: versao fixa evita falha no fetchLatestBaileysVersion
     // Browser.macOS impede geracao de QR nessa versao — usar array simples
-    const WA_VERSION = [2, 3000, 1015901307]
+    const WA_VERSION = [2, 2413, 51]
 
     const sock = makeWASocket({
         version: WA_VERSION,
