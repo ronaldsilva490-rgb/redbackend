@@ -652,20 +652,17 @@ async function connectToWhatsApp(tenantId, forceReset = false) {
 
     const { state, saveCreds } = await useMultiFileAuthState(authPath)
 
-    // Baileys v7-rc.9: versao fixa evita falha no fetchLatestBaileysVersion
-    // Browser.macOS impede geracao de QR nessa versao — usar array simples
-    const WA_VERSION = [2, 2413, 51]
+    const { version } = await getBaileysVersion()
 
     const sock = makeWASocket({
-        version: WA_VERSION,
+        version,
         auth: state,
-        browser: ["RED IA", "Chrome", "120.0.0"],
-        logger: pino({ level: "silent" }),
+        printQRInTerminal: true,
+        browser: Browsers.macOS('Desktop'),
+        logger: pino({ level: 'warn' }),
         connectTimeoutMs: 60000,
         defaultQueryTimeoutMs: 60000,
-        keepAliveIntervalMs: 25000,
-        generateHighQualityLinkPreview: false,
-        syncFullHistory: false,
+        keepAliveIntervalMs: 25000
     })
 
     const session = { sock, aiConfigs: null, lastQr: null, status: 'connecting' }
