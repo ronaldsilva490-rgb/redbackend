@@ -651,17 +651,21 @@ async function connectToWhatsApp(tenantId, forceReset = false) {
     if (!fs.existsSync(authPath)) fs.mkdirSync(authPath, { recursive: true })
 
     const { state, saveCreds } = await useMultiFileAuthState(authPath)
-    const { version } = await getBaileysVersion()
+
+    // Baileys v7-rc.9: versao fixa evita falha no fetchLatestBaileysVersion
+    // Browser.macOS impede geracao de QR nessa versao — usar array simples
+    const WA_VERSION = [2, 3000, 1015901307]
 
     const sock = makeWASocket({
-        version,
+        version: WA_VERSION,
         auth: state,
-        printQRInTerminal: true,
-        browser: Browsers.macOS('Desktop'),
-        logger: pino({ level: 'warn' }),
+        browser: ["RED IA", "Chrome", "120.0.0"],
+        logger: pino({ level: "silent" }),
         connectTimeoutMs: 60000,
         defaultQueryTimeoutMs: 60000,
-        keepAliveIntervalMs: 25000
+        keepAliveIntervalMs: 25000,
+        generateHighQualityLinkPreview: false,
+        syncFullHistory: false,
     })
 
     const session = { sock, aiConfigs: null, lastQr: null, status: 'connecting' }
