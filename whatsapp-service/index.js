@@ -200,7 +200,11 @@ async function generateAudio(text, configs) {
         const { promisify } = require('util')
         const execFileAsync = promisify(execFile)
 
-        const voice = ttsCfg.voice_id || 'pt-BR-CamilaNeural'
+        // Valida se é um nome de voz Edge TTS válido (formato: xx-XX-NomeNeural)
+        // Se for um ID do ElevenLabs (sem hífens ou sem "Neural"), usa o padrão
+        const rawVoice = ttsCfg.voice_id || ''
+        const isValidEdgeVoice = /^[a-z]{2}-[A-Z]{2}-.+Neural$/.test(rawVoice)
+        const voice = isValidEdgeVoice ? rawVoice : 'pt-BR-CamilaNeural'
         const tmpOut = path.join('/tmp', `tts_${Date.now()}.mp3`)
 
         // Limita texto para não explodir o edge-tts
