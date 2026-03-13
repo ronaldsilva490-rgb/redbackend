@@ -496,10 +496,10 @@ async function loadTenantAIConfigs(tenantId) {
                 },
                 // TTS (síntese de voz)
                 tts: {
-                    provider: configs.tts_provider || 'elevenlabs',
+                    provider: configs.tts_provider || 'edge',
                     api_key: configs.tts_api_key || '',
-                    model: configs.tts_model || 'eleven_multilingual_v2',
-                    voice_id: configs.tts_voice_id || 'EXAVITQu4vr4xnSDxMaL',
+                    model: configs.tts_model || '',
+                    voice_id: configs.tts_voice_id || 'pt-BR-CamilaNeural',
                     enabled: configs.tts_enabled === 'true',
                     audio_probability: parseFloat(configs.tts_audio_probability) || 0.3
                 },
@@ -550,7 +550,7 @@ async function loadTenantAIConfigs(tenantId) {
                     enabled: d.vision_enabled !== false
                 },
                 tts: {
-                    provider: d.tts_provider || 'elevenlabs',
+                    provider: d.tts_provider || 'edge',
                     api_key: d.tts_api_key || '',
                     model: d.tts_model || 'eleven_multilingual_v2',
                     voice_id: d.tts_voice_id || '',
