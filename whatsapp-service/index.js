@@ -16,8 +16,7 @@ const QRCode = require('qrcode')
 const pino = require('pino')
 const path = require('path')
 const fs = require('fs')
-const FormData = require('form-data')
-// fetch nativo do Node 20 — sem necessidade de node-fetch
+// fetch nativo do Node 20 — sem necessidade de node-fetch ou form-data
 
 const app = express()
 app.use(cors())
@@ -78,31 +77,28 @@ async function transcribeAudio(audioBuffer, mimeType, configs) {
         fs.writeFileSync(tmpPath, audioBuffer)
         audioBuffer = null // libera RAM
 
-        const form = new FormData()
-        form.append('file', fs.createReadStream(tmpPath), {
-            filename: 'audio.ogg',
-            contentType: mimeType || 'audio/ogg'
-        })
-        form.append('model', sttCfg.model || 'whisper-large-v3-turbo')
+        let apiUrl = 'https://api.groq.com/openai/v1/audio/transcriptions'
+        const model = provider === 'openai'
+            ? (sttCfg.model || 'whisper-1')
+            : (sttCfg.model || 'whisper-large-v3-turbo')
+        if (provider === 'openai') apiUrl = 'https://api.openai.com/v1/audio/transcriptions'
+
+        // FormData nativo do Node 20 + Blob — compatível com fetch nativo, sem form-data lib
+        const fileBytes = fs.readFileSync(tmpPath)
+        const blob = new Blob([fileBytes], { type: mimeType || 'audio/ogg' })
+        const form = new globalThis.FormData()
+        form.append('file', blob, 'audio.ogg')
+        form.append('model', model)
         form.append('language', 'pt')
         form.append('response_format', 'text')
 
-        let apiUrl = 'https://api.groq.com/openai/v1/audio/transcriptions'
-        if (provider === 'openai') {
-            apiUrl = 'https://api.openai.com/v1/audio/transcriptions'
-            form.set('model', sttCfg.model || 'whisper-1')
-        }
-
         const resp = await fetch(apiUrl, {
             method: 'POST',
-            headers: {
-                Authorization: `Bearer ${apiKey}`,
-                ...form.getHeaders()
-            },
+            headers: { Authorization: `Bearer ${apiKey}` },
             body: form
         })
 
-        fs.unlinkSync(tmpPath)
+        try { fs.unlinkSync(tmpPath) } catch (_) {}
 
         if (!resp.ok) {
             const err = await resp.text()
@@ -192,65 +188,45 @@ async function analyzeImage(imageBuffer, caption, configs) {
 }
 
 // ══════════════════════════════════════════════════
-// MÓDULO DE VOZ — TTS (Text-to-Speech)
+// MÓDULO DE VOZ — TTS (Edge TTS — Microsoft, zero custo)
 // ══════════════════════════════════════════════════
 async function generateAudio(text, configs) {
     const ttsCfg = configs.tts || {}
-    const provider = ttsCfg.provider || 'elevenlabs'
-    const apiKey = ttsCfg.api_key || ''
-
-    if (!apiKey || !ttsCfg.enabled) return null
+    const ttsEnabled = ttsCfg.enabled === true || ttsCfg.enabled === 'true'
+    if (!ttsEnabled) return null
 
     try {
-        let audioBuffer = null
+        const { execFile } = require('child_process')
+        const { promisify } = require('util')
+        const execFileAsync = promisify(execFile)
 
-        if (provider === 'elevenlabs') {
-            const voiceId = ttsCfg.voice_id || 'EXAVITQu4vr4xnSDxMaL' // Sarah
-            const resp = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}/stream`, {
-                method: 'POST',
-                headers: {
-                    'xi-api-key': apiKey,
-                    'Content-Type': 'application/json',
-                    Accept: 'audio/mpeg'
-                },
-                body: JSON.stringify({
-                    text,
-                    model_id: ttsCfg.model || 'eleven_multilingual_v2',
-                    voice_settings: { stability: 0.5, similarity_boost: 0.75 }
-                })
-            })
-            if (!resp.ok) {
-                console.error('[TTS] ElevenLabs erro:', await resp.text())
-                return null
-            }
-            audioBuffer = Buffer.from(await resp.arrayBuffer())
-        } else if (provider === 'openai') {
-            const resp = await fetch('https://api.openai.com/v1/audio/speech', {
-                method: 'POST',
-                headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    model: ttsCfg.model || 'tts-1',
-                    input: text,
-                    voice: ttsCfg.voice_id || 'nova',
-                    response_format: 'opus'
-                })
-            })
-            if (!resp.ok) {
-                console.error('[TTS] OpenAI TTS erro:', await resp.text())
-                return null
-            }
-            audioBuffer = Buffer.from(await resp.arrayBuffer())
+        const voice = ttsCfg.voice_id || 'pt-BR-CamilaNeural'
+        const tmpOut = path.join('/tmp', `tts_${Date.now()}.mp3`)
+
+        // Limita texto para não explodir o edge-tts
+        const cleanText = text.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '').substring(0, 400)
+
+        await execFileAsync('edge-tts', [
+            '--voice', voice,
+            '--text', cleanText,
+            '--write-media', tmpOut
+        ], { timeout: 20000 })
+
+        if (!fs.existsSync(tmpOut)) {
+            console.error('[TTS] Arquivo de saída não gerado')
+            return null
         }
 
-        if (!audioBuffer) return null
-        console.log(`[TTS] ✅ Áudio gerado (${audioBuffer.length} bytes) via ${provider}`)
+        const audioBuffer = fs.readFileSync(tmpOut)
+        try { fs.unlinkSync(tmpOut) } catch (_) {}
+
+        console.log(`[TTS] ✅ Áudio gerado (${audioBuffer.length} bytes) via Edge TTS / ${voice}`)
         return audioBuffer
     } catch (err) {
-        console.error('[TTS] Exceção:', err.message)
+        console.error('[TTS] Exceção Edge TTS:', err.message)
         return null
     }
 }
-
 // ══════════════════════════════════════════════════
 // DECIDE SE ENVIA TEXTO, ÁUDIO OU AMBOS
 // ══════════════════════════════════════════════════
@@ -387,7 +363,12 @@ Retorne APENAS um JSON puro (sem markdown) com:
 
 Retorne APENAS o JSON puro.`
 
-        const analysisCfg = { ...aiConfigs, chat: { ...chatCfg } }
+        // Usa provider da proatividade se configurado, senão fallback para chat
+        const proactiveCfgForAI = aiConfigs.proactive || {}
+        const learningChatCfg = (proactiveCfgForAI.provider && proactiveCfgForAI.api_key && proactiveCfgForAI.model)
+            ? { provider: proactiveCfgForAI.provider, api_key: proactiveCfgForAI.api_key, model: proactiveCfgForAI.model, system_prompt: chatCfg.system_prompt }
+            : { ...chatCfg }
+        const analysisCfg = { ...aiConfigs, chat: learningChatCfg }
         const aiResponse = await getAIResponse(prompt, analysisCfg,
             'Você é um observador silencioso e analista de comportamento. Responda apenas com JSON puro.')
 
@@ -532,7 +513,10 @@ async function loadTenantAIConfigs(tenantId) {
                 // Proatividade
                 proactive: {
                     enabled: configs.proactive_enabled !== 'false',
-                    frequency: parseFloat(configs.proactive_frequency) || 0.15
+                    frequency: parseFloat(configs.proactive_frequency) || 0.15,
+                    provider: configs.proactive_provider || configs.chat_provider || provider,
+                    api_key: configs.proactive_api_key || configs[`${configs.proactive_provider || configs.chat_provider || provider}_api_key`] || '',
+                    model: configs.proactive_model || configs.chat_model || ''
                 },
                 // Legado (compatibilidade)
                 ai_provider: provider,
@@ -581,7 +565,10 @@ async function loadTenantAIConfigs(tenantId) {
                 },
                 proactive: {
                     enabled: d.proactive_enabled !== false,
-                    frequency: parseFloat(d.proactive_frequency) || 0.15
+                    frequency: parseFloat(d.proactive_frequency) || 0.15,
+                    provider: d.proactive_provider || d.ai_provider || 'gemini',
+                    api_key: d.proactive_api_key || d.api_key || '',
+                    model: d.proactive_model || d.model || ''
                 },
                 ai_provider: d.ai_provider || 'gemini',
                 api_key: d.api_key || '',
