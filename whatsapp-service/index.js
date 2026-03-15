@@ -770,16 +770,30 @@ async function getAIResponse(prompt, configs, overrideSystemPrompt = null, optio
 
         const sessionId = `WA_${configs.tenant_id || 'default'}`;
         
-        return new Promise((resolve) => {
+        return new Promise(async (resolve) => {
             if (!proxySocket || proxySocket.readyState !== WebSocket.OPEN) {
                 console.error("[AI] Proxy RED não está conectado.");
                 return resolve(null);
             }
 
-            // Guard: se já tem listener ativo pra essa sessão, ignora duplicata
+            // Fila saudável: se já tem requisição ativa, aguarda ela liberar (até 15s)
+            // Em vez de bloquear, enfileira e tenta de novo
             if (activeRedRequests.has(sessionId)) {
-                console.warn(`[AI] Já existe requisição ativa para ${sessionId}. Ignorando.`)
-                return resolve(null)
+                console.warn(`[AI] Requisição em andamento para ${sessionId}. Aguardando fila...`)
+                const waited = await new Promise(resolve => {
+                    const start = Date.now()
+                    const check = setInterval(() => {
+                        if (!activeRedRequests.has(sessionId)) {
+                            clearInterval(check)
+                            resolve(true)
+                        } else if (Date.now() - start > 15000) {
+                            clearInterval(check)
+                            activeRedRequests.delete(sessionId) // força limpeza se travou
+                            console.warn(`[AI] Timeout de fila para ${sessionId}. Forçando limpeza.`)
+                            resolve(true)
+                        }
+                    }, 300)
+                })
             }
             activeRedRequests.add(sessionId)
 
